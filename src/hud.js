@@ -24,6 +24,7 @@ export class Hud {
       cardSub: $('cardSub'),
       btnAgain: $('btnAgain'),
       btnSound: $('btnSound'),
+      freecam: $('freecamHud'),
       loader: $('loader'),
     };
     this._hintTimer = null;
@@ -76,6 +77,12 @@ export class Hud {
     this.el.shot.textContent = text;
     this.el.shot.classList.add('show');
     this._shotTimer = setTimeout(() => this.el.shot.classList.remove('show'), hold * 1000);
+  }
+
+  /** Freecam overlay: controls plus a live position readout. */
+  setFreecam(on, text) {
+    this.el.freecam.classList.toggle('show', on);
+    if (on && text) this.el.freecam.textContent = text;
   }
 
   card(title, sub) {

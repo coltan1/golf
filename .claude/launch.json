@@ -3,8 +3,8 @@
   "configurations": [
     {
       "name": "golf",
-      "runtimeExecutable": "python",
-      "runtimeArgs": ["-m", "http.server", "5177"],
+      "runtimeExecutable": "node",
+      "runtimeArgs": ["serve.mjs", "5177"],
       "port": 5177
     }
   ]

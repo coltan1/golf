@@ -47,6 +47,15 @@
   .dim{opacity:.5;font-weight:700}
   .sep{opacity:.28;padding:0 2px}
 
+  #freecamHud{
+    position:absolute;left:16px;bottom:max(16px,env(safe-area-inset-bottom));
+    opacity:0;pointer-events:none;transition:opacity .3s ease;
+    font-size:11.5px;font-weight:700;line-height:1.55;
+    white-space:pre;text-align:left;border-radius:14px;padding:10px 14px;
+    font-variant-numeric:tabular-nums;
+  }
+  #freecamHud.show{opacity:1}
+
   #topLeft{position:absolute;top:max(16px,env(safe-area-inset-top));left:16px}
   #topRight{position:absolute;top:max(16px,env(safe-area-inset-top));right:16px}
 
@@ -170,6 +179,7 @@
   <div id="powerLabel"></div>
   <div id="power"><div id="powerFill"></div></div>
   <div id="hint" class="pill"></div>
+  <div id="freecamHud" class="pill"></div>
 
   <div id="card">
     <div id="cardTitle">Par</div>

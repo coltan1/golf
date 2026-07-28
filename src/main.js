@@ -21,6 +21,7 @@ import { Ball, CLUBS, pickClub } from './ball.js';
 import { SwipeSwing } from './input.js';
 import { CameraRig } from './camerarig.js';
 import { AimLine } from './aimline.js';
+import { FreeCam } from './freecam.js';
 import { Audio } from './audio.js';
 import { Hud, scoreName } from './hud.js';
 
@@ -51,7 +52,7 @@ const hud = new Hud();
 const audio = new Audio();
 
 // ---------------------------------------------------------------- world
-let terrain, water, clouds, flag, clubhouse, golfer, ball, rig, aimLine, input, lights;
+let terrain, water, clouds, flag, clubhouse, golfer, ball, rig, aimLine, input, lights, freeCam;
 
 function buildWorld() {
   const ramp = makeToonRamp();
@@ -83,6 +84,33 @@ function buildWorld() {
   aimLine = new AimLine(scene);
   rig = new CameraRig(camera);
   input = new SwipeSwing(renderer.domElement);
+  freeCam = new FreeCam(camera, renderer.domElement);
+}
+
+// ---------------------------------------------------------------- freecam
+const _tmpDir = new THREE.Vector3();
+
+/**
+ * The game keeps simulating while the freecam is flying, so you can hit a
+ * shot and go watch it from anywhere. On the way out we hand the rig the
+ * camera's current pose so it eases back into framing instead of cutting.
+ */
+function toggleFreeCam(force) {
+  if (!freeCam) return false;
+  const want = force === undefined ? !freeCam.active : !!force;
+  if (want === freeCam.active) return freeCam.active;
+
+  if (want) {
+    freeCam.enable();
+    hud.hint('');
+  } else {
+    rig.pos.copy(camera.position);
+    camera.getWorldDirection(_tmpDir);
+    rig.look.copy(camera.position).addScaledVector(_tmpDir, 20);
+    freeCam.disable();
+  }
+  hud.setFreecam(freeCam.active, freeCam.status());
+  return freeCam.active;
 }
 
 // ---------------------------------------------------------------- game state
@@ -273,6 +301,7 @@ function wireInput() {
 
   hud.onAgain(() => { hud.hideCard(); beginHole(); });
   hud.onSound((on) => audio.setEnabled(on));
+
 }
 
 // ---------------------------------------------------------------- camera ctx
@@ -292,6 +321,7 @@ function camCtx() {
 // ---------------------------------------------------------------- loop
 const clock = new THREE.Clock();
 let time = 0;
+let fcReadout = 0;
 
 function frame() {
   requestAnimationFrame(frame);
@@ -327,11 +357,19 @@ function frame() {
     }
   }
 
-  input.enabled = game.state === 'ready' || game.state === 'charging';
+  // Freecam owns the pointer while it's flying, so the swing must stand down.
+  input.enabled = !freeCam.active && (game.state === 'ready' || game.state === 'charging');
 
-  // Keep the (deliberately tight) shadow camera centred on the action.
-  const focusX = game.state === 'watching' ? ball.pos.x : golfer.root.position.x;
-  const focusZ = game.state === 'watching' ? ball.pos.z : golfer.root.position.z;
+  // Keep the (deliberately tight) shadow camera centred on the action — or on
+  // the freecam, so wherever you fly still has shadows.
+  let focusX, focusZ;
+  if (freeCam.active) {
+    focusX = freeCam.pos.x; focusZ = freeCam.pos.z;
+  } else if (game.state === 'watching') {
+    focusX = ball.pos.x; focusZ = ball.pos.z;
+  } else {
+    focusX = golfer.root.position.x; focusZ = golfer.root.position.z;
+  }
   const focusY = heightAt(focusX, focusZ);
   lights.sun.target.position.set(focusX, focusY, focusZ);
   // ~45° from the left: shadows fall right and toward the camera, roughly as
@@ -339,9 +377,48 @@ function frame() {
   lights.sun.position.set(focusX - 135, focusY + 146, focusZ - 55);
   lights.sun.target.updateMatrixWorld();
 
-  rig.update(dt, camCtx());
+  if (freeCam.active) {
+    freeCam.update(dt);
+    // Refresh the readout a few times a second rather than every frame.
+    fcReadout += dt;
+    if (fcReadout > 0.12) { fcReadout = 0; hud.setFreecam(true, freeCam.status()); }
+  } else {
+    rig.update(dt, camCtx());
+  }
+
   renderer.render(scene, camera);
 }
+
+// ---------------------------------------------------------------- freecam API
+// Bound at module load rather than inside boot, so the key and the console
+// handle work from the first frame and don't depend on the world having
+// finished building. Both no-op until it has.
+window.addEventListener('keydown', (e) => {
+  // Match physical key or produced character: `code` is absent on synthetic
+  // events and unreliable on non-QWERTY layouts.
+  const isF = e.code === 'KeyF' || e.key === 'f' || e.key === 'F';
+  if (isF && !e.repeat && !e.metaKey && !e.ctrlKey) toggleFreeCam();
+});
+
+/** freecam() toggles · freecam.goto(x,y,z) · freecam.lookAt(x,y,z) · freecam.off() */
+window.freecam = Object.assign(
+  (on) => (freeCam ? (toggleFreeCam(on), freeCam.status()) : 'still loading'),
+  {
+    goto: (x, y, z) => {
+      if (!freeCam) return 'still loading';
+      toggleFreeCam(true); freeCam.goto(x, y, z); return freeCam.status();
+    },
+    lookAt: (x, y, z) => {
+      if (!freeCam) return 'still loading';
+      toggleFreeCam(true); freeCam.lookAt(x, y, z); return freeCam.status();
+    },
+    off: () => { toggleFreeCam(false); return 'freecam off'; },
+  }
+);
+console.log(
+  '%cSunny Links%c  ·  press F for freecam, or call freecam() / freecam.goto(x, y, z)',
+  'font-weight:700', 'color:#678'
+);
 
 // ---------------------------------------------------------------- boot
 function onResize() {

@@ -8,14 +8,38 @@ texture, sound and piece of geometry is generated at runtime.
 ## Running it
 
 ES modules need to be served over HTTP (opening `index.html` straight off disk
-will fail on CORS). Any static server works:
+will fail on CORS):
 
 ```bash
-python -m http.server 5177
+node serve.mjs
 ```
 
 Then open <http://localhost:5177>. Three.js is loaded from a CDN via an import
 map, so the first load needs a network connection.
+
+`serve.mjs` is a ~50-line static server whose only real job is sending
+`Cache-Control: no-store`. Without that, browsers apply *heuristic* freshness to
+responses carrying only `Last-Modified` — the longer a file has gone unchanged,
+the longer it gets cached — so the file you finally edit after a while is
+exactly the one that goes stale. The page still renders; it just isn't running
+your code. Any static server works, but plain `python -m http.server` will bite
+you this way.
+
+## Freecam
+
+Press **F**, or call `freecam()` from the browser console. The game keeps
+simulating while you fly, so you can hit a shot and go watch it from anywhere.
+
+| | |
+|---|---|
+| Move | `W` `A` `S` `D`, `Q` down / `E` up |
+| Look | drag |
+| Speed | `shift` fast · `ctrl` slow · mouse wheel to set |
+| Exit | `F` — the game camera eases back into framing rather than cutting |
+
+From the console: `freecam.goto(x, y, z)`, `freecam.lookAt(x, y, z)`,
+`freecam.off()`. Handy targets — the pond is around `(-58, -286)`, the green
+`(31, -388)`, the tee `(0, 6)`.
 
 ## Playing
 
