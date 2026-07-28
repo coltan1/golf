@@ -132,6 +132,28 @@ fed by a custom `aCourse` vertex attribute. `fwidth` fades the shader grooves
 out the moment they get finer than the pixel grid, so the fairway recedes
 smoothly instead of shimmering.
 
+**Boundaries are geometry, not just colour.** What makes a hole read as a golf
+hole is that every mowing line is a real edge:
+
+- *Height.* Rough is left long and the fairway and green are cut short, so
+  there's an actual lip at each boundary — the rough sits ~0.34 yards proud,
+  and the green is a built-up pad on a tight shoulder. That step catches the
+  light, and a lit edge reads far harder than a colour change.
+- *Per-pixel sharpening.* `aCourse` carries the raw *signed distance* to the
+  fairway and green edges rather than pre-blended masks, because a mask baked
+  at vertex resolution is already smeared over a couple of yards by the time it
+  interpolates and no shader work gets that edge back. The fragment shader
+  thresholds it against its own `fwidth`, so a mowing line stays a line right
+  under the camera.
+- *The cut seam.* Long grass standing against short throws a thin shadow along
+  every boundary. It's a small effect that does more for the golf-course read
+  than any amount of colour difference.
+
+The cart path gets the same treatment: concrete with aggregate speckle, tyre
+tracks and weathered edges in the bake, plus crisp slab edges and expansion
+joints drawn per-pixel — joints are a few inches wide, which no practical
+texture resolution could hold.
+
 The putting green is left completely clean — no stripes, no mottle, no grain,
 and only a trace of undulation. It's the shortest, most uniform cut on the
 course, and leaving it bare is what makes it read that way against the patchy

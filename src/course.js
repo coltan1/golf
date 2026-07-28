@@ -154,6 +154,21 @@ export function fairwayHalfWidth(t) {
   return 17 + 7.5 * Math.sin(t * Math.PI) - 4 * smoothstep(0.72, 0.95, t);
 }
 
+/**
+ * The cart path, offset to the right of play. Shared by the texture bake, the
+ * height field and the terrain shader so all three agree on where it runs.
+ */
+export const CART_PATH = { offset: 38, halfWidth: 3.4, zFrom: -18, zTo: -352 };
+
+/** 0…1 coverage of the cart path at a point. `n` is a `nearest()` result. */
+export function cartPathAt(x, z, n) {
+  if (z > CART_PATH.zFrom || z < CART_PATH.zTo || n.side < 0) return 0;
+  const d = Math.abs(n.dist - CART_PATH.offset);
+  const fade = smoothstep(CART_PATH.zFrom - 6, CART_PATH.zFrom - 14, z) *
+               smoothstep(CART_PATH.zTo + 6, CART_PATH.zTo + 14, z);
+  return (1 - smoothstep(CART_PATH.halfWidth - 0.45, CART_PATH.halfWidth + 0.45, d)) * fade;
+}
+
 /** A point `dist` yards further down the hole — used to aim the tee shot. */
 export function aimPointAhead(x, z, dist) {
   const n = nearest(x, z);
@@ -235,9 +250,11 @@ export function heightAt(x, z) {
   const mown = 1 - smoothstep(hw * 0.9, hw * 3.0, n.dist);
   h = lerp(h, swell(x, z), mown * 0.88);
 
-  // Putting surface: a near-flat pad with a whisper of crown.
+  // Putting surface: a near-flat pad on a defined shoulder. The blend is
+  // deliberately tight — a green is built up as a pad, and that shoulder is a
+  // big part of why a green reads as a green rather than as mown fairway.
   const gd = distToGreen(x, z);
-  const gb = 1 - smoothstep(GREEN.r * 0.45, GREEN.r * 1.45, gd);
+  const gb = 1 - smoothstep(GREEN.r - 1.0, GREEN.r + 3.0, gd);
   if (gb > 0) {
     // A gentle crown for putt break, and only a trace of undulation — enough
     // that putts read, little enough that the surface stays visually clean.
@@ -270,15 +287,26 @@ export function heightAt(x, z) {
   // is what separates it from the billiard-flat mown surfaces. Wavelengths
   // stay well above the ~3 yard grid spacing so the mesh can resolve them.
   const mownTight = Math.max(
-    1 - smoothstep(hw - 1, hw + 5, n.dist),
-    1 - smoothstep(GREEN.r - 1, GREEN.r + 4, gd)
+    1 - smoothstep(hw - 0.8, hw + 1.2, n.dist),
+    1 - smoothstep(GREEN.r - 0.8, GREEN.r + 1.2, gd)
   );
   // One octave only, and a long one: fbm2's top harmonic is 6× its base, so
   // 0.072 bottoms out near a 14-yard wavelength — about four vertices per
   // bump on the ~3 yard grid. Anything shorter facets instead of undulating.
-  if (mownTight < 0.999) {
-    h += (1 - mownTight) * 1.25 * fbm2(x * 0.072 + 11.3, z * 0.069 - 7.1);
+  const path = cartPathAt(x, z, n);
+  const unmown = (1 - mownTight) * (1 - path);
+  if (unmown > 0.001) {
+    h += unmown * 1.25 * fbm2(x * 0.072 + 11.3, z * 0.069 - 7.1);
   }
+
+  // Grass height is real height. Rough is left long and the fairway and green
+  // are cut short, so every mowing line has an actual lip at it — that step
+  // catches the light and is what makes the boundaries read as boundaries
+  // instead of as a change of paint.
+  h += 0.34 * unmown;
+
+  // The cart path is graded: sits just below the turf either side of it.
+  h -= 0.22 * path;
 
   // Elevated tee. The hole falls away from you for the first hundred yards,
   // which opens the whole view up — the reference's downhill composition.
@@ -328,7 +356,10 @@ const C = {
   sandDark: [0xec, 0xdd, 0xbe],
   water:    [0x3f, 0x8d, 0xa6],
   waterEdge:[0x92, 0xd6, 0xdd],
-  path:     [0xe8, 0xe1, 0xd4],
+  path:     [0xe4, 0xdd, 0xcf],
+  pathAlt:  [0xd6, 0xce, 0xbe], // aggregate speckle
+  pathWear: [0xc6, 0xbd, 0xac], // tyre tracks
+  pathEdge: [0xb4, 0xae, 0x9a], // weathered edge
 };
 
 function mix(a, b, t, out) {
@@ -388,8 +419,11 @@ export function makeCourseTexture(size = 1024) {
       // Keyed on perpendicular distance, so the bands run away from the tee
       // and curve with the dogleg — the corduroy in the reference. The fine
       // grooves on top of these are drawn per-pixel in the terrain shader.
+      // Tight transition: a mowing line is a line, not a gradient. This is as
+      // sharp as ~0.76 yards per texel can go; the terrain shader draws the
+      // actual crisp seam on top, per-pixel.
       const hw = fairwayHalfWidth(n.t);
-      const fairMask = 1 - smoothstep(hw - 3.0, hw + 3.5, n.dist);
+      const fairMask = 1 - smoothstep(hw - 0.7, hw + 0.7, n.dist);
       if (fairMask > 0.001) {
         const band = Math.sin((n.perp / MOW_PERIOD) * Math.PI * 2);
         const stripe = smoothstep(-0.6, 0.6, band);
@@ -404,11 +438,13 @@ export function makeCourseTexture(size = 1024) {
       // its own pattern, so running the fairway stripes straight across it
       // makes the two surfaces look like one. Leaving it plain is what reads
       // as "this is the green".
+      // A real fringe: a distinct ring cut between putting surface and
+      // approach, with its own crisp edges on both sides.
       const gd = distToGreen(x, z);
-      const collar = (1 - smoothstep(GREEN.r + 1.0, GREEN.r + 6.5, gd)) *
-                     smoothstep(GREEN.r - 1.5, GREEN.r + 1.0, gd);
-      if (collar > 0.001) mix(col, C.collar, collar * 0.85, col);
-      const gMask = 1 - smoothstep(GREEN.r - 2.2, GREEN.r + 0.6, gd);
+      const collar = smoothstep(GREEN.r - 0.6, GREEN.r + 0.6, gd) *
+                     (1 - smoothstep(GREEN.r + 2.4, GREEN.r + 3.4, gd));
+      if (collar > 0.001) mix(col, C.collar, collar * 0.95, col);
+      const gMask = 1 - smoothstep(GREEN.r - 0.7, GREEN.r + 0.7, gd);
       if (gMask > 0.001) {
         // Flat colour, full stop — no stripes, no mottle, no grain. The green
         // is the shortest, most uniform cut on the course, and leaving it
@@ -417,10 +453,20 @@ export function makeCourseTexture(size = 1024) {
         mix(col, C.greenA, gMask, col);
       }
 
-      // --- cart path: a pale ribbon offset to the right of play ---
-      if (z < -18 && z > -352) {
-        const pathMask = (1 - smoothstep(1.4, 2.6, Math.abs(n.dist - 38))) * (n.side > 0 ? 1 : 0);
-        if (pathMask > 0.001) mix(col, C.path, pathMask * 0.9, col);
+      // --- cart path: concrete, offset to the right of play ---
+      const pathMask = cartPathAt(x, z, n);
+      if (pathMask > 0.001) {
+        const pd = Math.abs(n.dist - CART_PATH.offset);
+        // Aggregate speckle in the concrete.
+        const agg = 0.5 + 0.5 * fbm2(x * 0.62 + 21.4, z * 0.59 - 13.7);
+        mix(C.path, C.pathAlt, agg, tmp);
+        // Two faint darker bands where the buggies actually run.
+        const wear = Math.exp(-Math.pow((pd - 1.45) / 0.62, 2));
+        mix(tmp, C.pathWear, wear * 0.45, tmp);
+        // Weathered edges, dirtier where the turf creeps in.
+        const kerb = smoothstep(CART_PATH.halfWidth - 1.1, CART_PATH.halfWidth - 0.2, pd);
+        mix(tmp, C.pathEdge, kerb * 0.75, tmp);
+        mix(col, tmp, pathMask, col);
       }
 
       // --- bunkers: damp sand at the rim, bright sand in the middle ---

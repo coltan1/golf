@@ -4,16 +4,17 @@
  * The mesh is a hand-built grid (rather than PlaneGeometry) so the UVs line up
  * exactly with the baked course texture from course.js.
  *
- * It also carries a custom `aCourse` attribute — (signed distance from the
- * centreline, groove mask, grain mask) — which the material uses to draw the
- * mowing lines and the turf grain per-pixel. Baking detail that fine into the
- * texture would need a 4k+ canvas and would still alias; doing it in the
- * shader keeps it crisp underfoot and lets it fade out cleanly with distance.
+ * It also carries a custom `aCourse` attribute — signed distance from the
+ * centreline, and signed distance to the fairway and green edges — which the
+ * material uses to draw the mowing lines, the cut seams, the turf grain and
+ * the cart path per-pixel. Baking detail that fine into the texture would need
+ * a 4k+ canvas and would still alias; doing it in the shader keeps it crisp
+ * underfoot and lets it fade out cleanly with distance.
  */
 
 import * as THREE from 'three';
 import {
-  WORLD_SIZE, WORLD_CX, WORLD_CZ, WATER_Y, POND, GREEN, MOW_PERIOD,
+  WORLD_SIZE, WORLD_CX, WORLD_CZ, WATER_Y, POND, GREEN, MOW_PERIOD, CART_PATH,
   heightAt, makeCourseTexture, nearest, fairwayHalfWidth,
 } from './course.js';
 import { smoothstep } from './util.js';
@@ -56,30 +57,21 @@ export function makeToonRamp() {
 }
 
 /**
- * The two surface masks the terrain shader needs. They have to be separate
- * values: the green wants no grooves *and* no grain, while the rough wants no
- * grooves but maximum grain — so one mask cannot drive both.
+ * Signed distance, in yards, to each mowing boundary — positive inside.
  *
- *   groove — where mowing lines are drawn. Fairway only; the green is cut on
- *            its own pattern, and running the fairway lines across it makes
- *            the two surfaces read as one stretch of grass.
- *   grain  — how rough the turf looks. Full in the rough, a trace on the
- *            fairway so it isn't plastic, zero on the green, which is the
- *            smoothest cut surface on the course.
+ * Raw distances rather than pre-blended masks, because the fragment shader
+ * needs to sharpen them against its own pixel footprint. A mask baked at
+ * vertex resolution is already blurred over ~2 yards of ground by the time it
+ * interpolates, and no amount of shader work gets that edge back.
  */
-function surfaceMasks(x, z, n, out) {
-  const hw = fairwayHalfWidth(n.t);
-  const fair = 1 - smoothstep(hw - 2.5, hw + 2.0, n.dist);
-  const gd = Math.hypot(x - GREEN.x, z - GREEN.z);
-  const onGreen = 1 - smoothstep(GREEN.r - 2.5, GREEN.r + 1.5, gd);
-
-  out.groove = fair * (1 - onGreen);
-  out.grain = (1 - onGreen) * (1 - fair * 0.82);
+function surfaceEdges(x, z, n, out) {
+  out.fair = fairwayHalfWidth(n.t) - n.dist;
+  out.green = GREEN.r - Math.hypot(x - GREEN.x, z - GREEN.z);
   return out;
 }
 
 export function createTerrain(renderer, toonRamp) {
-  const SEG = 256;
+  const SEG = 384;
   const half = WORLD_SIZE / 2;
   const x0 = WORLD_CX - half;
   const z0 = WORLD_CZ - half;
@@ -91,7 +83,7 @@ export function createTerrain(renderer, toonRamp) {
   const course = new Float32Array(vertCount * 3);
   const indices = new Uint32Array(SEG * SEG * 6);
 
-  const masks = { groove: 0, grain: 0 };
+  const edges = { fair: 0, green: 0 };
   let v = 0, t = 0;
   for (let j = 0; j <= SEG; j++) {
     const z = z0 + j * step;
@@ -106,10 +98,10 @@ export function createTerrain(renderer, toonRamp) {
       // Signed perpendicular distance is exactly linear away from a straight
       // centreline, so it interpolates across these quads without distortion.
       const n = nearest(x, z);
-      surfaceMasks(x, z, n, masks);
+      surfaceEdges(x, z, n, edges);
       course[v * 3] = n.perp;
-      course[v * 3 + 1] = masks.groove;
-      course[v * 3 + 2] = masks.grain;
+      course[v * 3 + 1] = edges.fair;
+      course[v * 3 + 2] = edges.green;
       v++;
     }
   }
@@ -138,19 +130,23 @@ export function createTerrain(renderer, toonRamp) {
 
   const mat = new THREE.MeshToonMaterial({ map, gradientMap: toonRamp });
 
-  // Fine mowing grooves, drawn per-pixel and antialiased against the pixel
-  // footprint so they never shimmer as they recede.
+  // Everything the baked texture cannot hold: crisp mowing seams, fine
+  // grooves, turf grain and cart-path detail — all drawn per-pixel and
+  // antialiased against the pixel footprint so nothing shimmers as it recedes.
   mat.onBeforeCompile = (shader) => {
     shader.vertexShader = shader.vertexShader
       .replace('#include <common>', `#include <common>
         attribute vec3 aCourse;
-        varying vec3 vCourse;`)
+        varying vec3 vCourse;
+        varying vec2 vWorld;`)
       .replace('#include <begin_vertex>', `#include <begin_vertex>
-        vCourse = aCourse;`);
+        vCourse = aCourse;
+        vWorld = position.xz;`);
 
     shader.fragmentShader = shader.fragmentShader
       .replace('#include <common>', `#include <common>
         varying vec3 vCourse;
+        varying vec2 vWorld;
 
         // Cheap value noise for turf grain. Prefixed to avoid colliding with
         // anything three.js declares.
@@ -166,42 +162,73 @@ export function createTerrain(renderer, toonRamp) {
             mix(ccHash(i),                 ccHash(i + vec2(1.0, 0.0)), f.x),
             mix(ccHash(i + vec2(0.0,1.0)), ccHash(i + vec2(1.0, 1.0)), f.x),
             f.y);
+        }
+        // A band centred on d = 0, never thinner than one pixel, and faded
+        // out once a pixel spans so much ground that it would read as a smear.
+        float ccSeam(float d, float minWidth) {
+          float fp = fwidth(d);
+          float w = max(minWidth, fp * 1.2);
+          float k = d / w;
+          return exp(-k * k) * (1.0 - smoothstep(1.2, 3.5, fp));
         }`)
       .replace('#include <map_fragment>', `#include <map_fragment>
         {
-          float period = ${MOW_PERIOD.toFixed(2)};  // yards between grooves
-          float lat = vCourse.x;
-          float footprint = fwidth(lat);
-          float groove = sin(lat * (6.2831853 / period));
-          // Once a groove is finer than the pixel grid, fade it out entirely.
-          float aa = 1.0 - smoothstep(period * 0.22, period * 0.60, footprint);
-          diffuseColor.rgb *= 1.0 + groove * 0.05 * aa * vCourse.y;
-        }
-        {
-          // --- turf grain -------------------------------------------------
-          // The baked texture is ~0.76 yards per texel, which cannot resolve
-          // anything at tuft scale, so the close-up roughness lives here.
-          // The map UV is a linear function of world XZ, so it doubles as a
-          // world-space coordinate for the noise.
-          vec2 wp = vMapUv * ${WORLD_SIZE.toFixed(1)};
-          float fw = fwidth(wp.x) + fwidth(wp.y);
+          // Signed yards inside each mown surface, sharpened per-pixel. Doing
+          // the threshold here rather than at vertices is what keeps a mowing
+          // line looking like a line right under the camera.
+          float fe = vCourse.y;
+          float ge = vCourse.z;
+          float fairM  = smoothstep(-fwidth(fe), fwidth(fe), fe);
+          float greenM = smoothstep(-fwidth(ge), fwidth(ge), ge);
+          float offGreen = 1.0 - greenM;
 
-          // Three scales, each faded out at its *own* Nyquist limit — an
-          // octave has to vanish before the pixel footprint reaches half its
-          // wavelength, or it aliases and the rough boils as the camera
-          // moves. Coarse patches therefore survive far up the hole while
-          // tufts drop away within a few yards.
-          float patches = ccNoise(wp * 0.10) - 0.5;   // ~10 yd
-          float clumps  = ccNoise(wp * 0.40) - 0.5;   // ~2.5 yd
-          float tufts   = ccNoise(wp * 1.60) - 0.5;   // ~0.6 yd
+          // --- cart path ---------------------------------------------------
+          float pd = abs(vCourse.x + ${CART_PATH.offset.toFixed(1)});
+          float inZ = step(${CART_PATH.zTo.toFixed(1)}, vWorld.y)
+                    * step(vWorld.y, ${CART_PATH.zFrom.toFixed(1)});
+          float pathM = (1.0 - smoothstep(
+            ${(CART_PATH.halfWidth - 0.35).toFixed(2)},
+            ${(CART_PATH.halfWidth + 0.35).toFixed(2)}, pd)) * inZ;
+
+          // Expansion joints every few yards, plus a crisp shadowed edge where
+          // the slab meets turf. Both are far too fine for the baked texture.
+          float joint = ccSeam(fract(vWorld.y / 7.5) - 0.5, 0.035) * pathM;
+          float slabEdge = ccSeam(pd - ${CART_PATH.halfWidth.toFixed(2)}, 0.22) * inZ;
+          diffuseColor.rgb *= 1.0 - 0.20 * joint - 0.16 * slabEdge;
+
+          // --- mowing grooves ----------------------------------------------
+          float period = ${MOW_PERIOD.toFixed(2)};  // yards between passes
+          float footprint = fwidth(vCourse.x);
+          float groove = sin(vCourse.x * (6.2831853 / period));
+          float gaa = 1.0 - smoothstep(period * 0.22, period * 0.60, footprint);
+          diffuseColor.rgb *= 1.0 + groove * 0.05 * gaa * fairM * offGreen;
+
+          // --- the cut lines themselves ------------------------------------
+          // Long rough standing against short grass throws a thin shadow along
+          // every mowing boundary. It is a small effect that does more for the
+          // "this is a golf course" read than any amount of colour difference.
+          diffuseColor.rgb *= 1.0 - 0.13 * ccSeam(fe, 0.38) * offGreen * (1.0 - pathM);
+          diffuseColor.rgb *= 1.0 - 0.11 * ccSeam(ge, 0.32);
+
+          // --- turf grain ---------------------------------------------------
+          // The baked texture is ~0.76 yards per texel and cannot resolve
+          // anything at tuft scale, so close-up roughness lives here.
+          float fw = fwidth(vWorld.x) + fwidth(vWorld.y);
+
+          // Three scales, each faded at its *own* Nyquist limit — an octave
+          // must vanish before the pixel footprint reaches half its
+          // wavelength, or it aliases and the rough boils as the camera moves.
+          float patches = ccNoise(vWorld * 0.10) - 0.5;   // ~10 yd
+          float clumps  = ccNoise(vWorld * 0.40) - 0.5;   // ~2.5 yd
+          float tufts   = ccNoise(vWorld * 1.60) - 0.5;   // ~0.6 yd
           float grain =
             patches * 0.32 * (1.0 - smoothstep(2.5, 5.0,  fw)) +
             clumps  * 0.34 * (1.0 - smoothstep(0.6, 1.25, fw)) +
             tufts   * 0.28 * (1.0 - smoothstep(0.15, 0.31, fw));
 
-          // Full strength in the rough, a trace on mown grass so the fairway
-          // still reads as grass rather than plastic.
-          grain *= vCourse.z;
+          // Full in the rough, a trace on the fairway so it isn't plastic,
+          // none on the green or the concrete.
+          grain *= offGreen * (1.0 - 0.82 * fairM) * (1.0 - pathM);
 
           // Warm the bright side and cool the dark side — variation in hue as
           // well as value is what stops it looking like noise on flat paint.
