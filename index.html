@@ -1,0 +1,191 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<title>Sunny Links — Hole 1</title>
+<style>
+  :root{
+    --ink:#20404f;
+    --pill:rgba(255,255,255,.62);
+    --pill-line:rgba(255,255,255,.75);
+    --shadow:0 6px 22px rgba(30,70,90,.16);
+  }
+  *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+  html,body{margin:0;height:100%;overflow:hidden;background:#cfe9f7}
+  body{
+    font-family:"Nunito","Quicksand",ui-rounded,-apple-system,"Segoe UI Variable Display","Segoe UI",system-ui,sans-serif;
+    color:var(--ink);
+    -webkit-font-smoothing:antialiased;
+    user-select:none;
+  }
+  canvas{display:block;touch-action:none}
+
+  /* ---------- soft vignette, keeps the frame calm ---------- */
+  #vignette{
+    position:fixed;inset:0;pointer-events:none;z-index:5;
+    background:radial-gradient(ellipse 82% 74% at 50% 46%,rgba(0,0,0,0) 62%,rgba(25,70,95,.09) 100%);
+  }
+
+  /* ---------- HUD ---------- */
+  #hud{position:fixed;inset:0;z-index:10;pointer-events:none}
+  .pill{
+    background:var(--pill);
+    border:1px solid var(--pill-line);
+    backdrop-filter:blur(12px) saturate(1.15);
+    -webkit-backdrop-filter:blur(12px) saturate(1.15);
+    border-radius:999px;
+    box-shadow:var(--shadow);
+    padding:9px 16px;
+    font-size:14px;
+    font-weight:700;
+    letter-spacing:.2px;
+    line-height:1;
+    white-space:nowrap;
+  }
+  .row{display:flex;gap:8px;align-items:center}
+  .dim{opacity:.5;font-weight:700}
+  .sep{opacity:.28;padding:0 2px}
+
+  #topLeft{position:absolute;top:max(16px,env(safe-area-inset-top));left:16px}
+  #topRight{position:absolute;top:max(16px,env(safe-area-inset-top));right:16px}
+
+  #btnSound{
+    pointer-events:auto;cursor:pointer;width:38px;height:38px;padding:0;
+    display:grid;place-items:center;font-size:15px;
+    transition:transform .25s cubic-bezier(.22,1,.36,1),opacity .25s;
+  }
+  #btnSound:active{transform:scale(.92)}
+
+  /* ---------- centre hint ---------- */
+  #hint{
+    position:absolute;left:50%;bottom:112px;transform:translateX(-50%) translateY(6px);
+    opacity:0;transition:opacity .55s ease,transform .55s cubic-bezier(.22,1,.36,1);
+    font-size:13.5px;font-weight:700;
+  }
+  #hint.show{opacity:1;transform:translateX(-50%) translateY(0)}
+
+  /* ---------- power meter ---------- */
+  #power{
+    position:absolute;left:50%;bottom:58px;transform:translateX(-50%) translateY(10px) scaleX(.9);
+    width:230px;height:6px;border-radius:999px;
+    background:rgba(255,255,255,.42);
+    border:1px solid rgba(255,255,255,.6);
+    box-shadow:var(--shadow);
+    opacity:0;transition:opacity .35s ease,transform .45s cubic-bezier(.22,1,.36,1);
+    overflow:hidden;
+  }
+  #power.show{opacity:1;transform:translateX(-50%) translateY(0) scaleX(1)}
+  #powerFill{
+    height:100%;width:0%;border-radius:999px;
+    background:linear-gradient(90deg,#a9e5a0 0%,#ffd97a 58%,#ff9f6b 100%);
+    transition:width .06s linear;
+    box-shadow:0 0 12px rgba(255,190,120,.55);
+  }
+  #powerLabel{
+    position:absolute;left:50%;bottom:74px;transform:translateX(-50%);
+    font-size:12px;font-weight:800;letter-spacing:.6px;opacity:0;
+    transition:opacity .3s ease;color:#fff;text-shadow:0 2px 10px rgba(20,60,80,.45)
+  }
+  #powerLabel.show{opacity:.95}
+
+  /* ---------- shot readout ---------- */
+  #shot{
+    position:absolute;left:50%;top:96px;transform:translateX(-50%) translateY(-8px);
+    opacity:0;transition:opacity .5s ease,transform .6s cubic-bezier(.22,1,.36,1);
+    font-size:15px;
+  }
+  #shot.show{opacity:1;transform:translateX(-50%) translateY(0)}
+
+  /* ---------- scorecard ---------- */
+  #card{
+    position:absolute;left:50%;top:50%;transform:translate(-50%,-46%) scale(.96);
+    opacity:0;pointer-events:none;transition:opacity .6s ease,transform .7s cubic-bezier(.22,1,.36,1);
+    background:rgba(255,255,255,.72);
+    border:1px solid rgba(255,255,255,.8);
+    backdrop-filter:blur(16px) saturate(1.2);
+    -webkit-backdrop-filter:blur(16px) saturate(1.2);
+    border-radius:28px;box-shadow:0 18px 50px rgba(25,70,95,.22);
+    padding:30px 40px 26px;text-align:center;min-width:250px;
+  }
+  #card.show{opacity:1;transform:translate(-50%,-50%) scale(1);pointer-events:auto}
+  #cardTitle{font-size:30px;font-weight:800;letter-spacing:-.4px;margin-bottom:4px}
+  #cardSub{font-size:14px;font-weight:700;opacity:.55;margin-bottom:20px}
+  #btnAgain{
+    pointer-events:auto;cursor:pointer;border:none;font:inherit;font-weight:800;font-size:14px;
+    color:#fff;background:linear-gradient(180deg,#63c46f,#48ab5b);
+    padding:12px 26px;border-radius:999px;box-shadow:0 8px 20px rgba(60,150,90,.35);
+    transition:transform .22s cubic-bezier(.22,1,.36,1),box-shadow .22s;
+  }
+  #btnAgain:hover{transform:translateY(-1px);box-shadow:0 11px 24px rgba(60,150,90,.42)}
+  #btnAgain:active{transform:scale(.96)}
+
+  /* ---------- loading ---------- */
+  #loader{
+    position:fixed;inset:0;z-index:50;display:grid;place-items:center;
+    background:linear-gradient(180deg,#bfe4f7 0%,#e7f5fb 100%);
+    transition:opacity .9s ease;
+  }
+  #loader.hide{opacity:0;pointer-events:none}
+  #loaderInner{text-align:center}
+  #loaderTitle{font-size:26px;font-weight:800;letter-spacing:-.3px;opacity:.85}
+  #loaderSub{margin-top:8px;font-size:13px;font-weight:700;opacity:.45}
+  #dots{margin-top:20px;display:flex;gap:7px;justify-content:center}
+  #dots i{width:7px;height:7px;border-radius:50%;background:rgba(32,64,79,.35);animation:bob 1.1s ease-in-out infinite}
+  #dots i:nth-child(2){animation-delay:.14s}
+  #dots i:nth-child(3){animation-delay:.28s}
+  @keyframes bob{0%,100%{transform:translateY(0);opacity:.35}50%{transform:translateY(-6px);opacity:.9}}
+
+  @media (max-width:640px){
+    .pill{font-size:12.5px;padding:8px 13px}
+    #hint{font-size:12.5px;bottom:104px}
+    #power{width:190px}
+  }
+</style>
+
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://unpkg.com/three@0.169.0/build/three.module.js"
+  }
+}
+</script>
+</head>
+<body>
+
+<div id="vignette"></div>
+
+<div id="hud">
+  <div id="topLeft" class="pill">
+    <span>Hole 1</span><span class="sep">·</span><span class="dim">Par 4</span><span class="sep">·</span><span id="holeYds" class="dim">— yds</span>
+  </div>
+
+  <div id="topRight" class="row">
+    <div class="pill"><span id="strokes">Stroke 1</span></div>
+    <div class="pill" id="btnSound" title="Sound">🔊</div>
+  </div>
+
+  <div id="shot" class="pill"></div>
+
+  <div id="powerLabel"></div>
+  <div id="power"><div id="powerFill"></div></div>
+  <div id="hint" class="pill"></div>
+
+  <div id="card">
+    <div id="cardTitle">Par</div>
+    <div id="cardSub">4 strokes</div>
+    <button id="btnAgain">Play again</button>
+  </div>
+</div>
+
+<div id="loader">
+  <div id="loaderInner">
+    <div id="loaderTitle">Sunny Links</div>
+    <div id="loaderSub">mowing the fairway…</div>
+    <div id="dots"><i></i><i></i><i></i></div>
+  </div>
+</div>
+
+<script type="module" src="./src/main.js"></script>
+</body>
+</html>

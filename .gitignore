@@ -1,0 +1,13 @@
+# three.js is loaded from a CDN via an import map — node_modules only ever
+# appears transiently when running the headless gameplay sim.
+node_modules/
+package-lock.json
+
+# Local Claude Code settings (launch.json is intentionally tracked)
+.claude/settings.local.json
+
+# OS cruft
+.DS_Store
+Thumbs.db
+desktop.ini
+*.log
