@@ -98,30 +98,112 @@ function plantable(x, z) {
   return true;
 }
 
+/**
+ * Is this a legal spot for a low shrub? Azaleas mass at the *front* of the
+ * treeline, closer in than any tree is allowed, which is exactly what gives
+ * the reference its band of colour along the edge of the corridor.
+ */
+function shrubbable(x, z) {
+  const n = nearest(x, z);
+  const hw = fairwayHalfWidth(n.t);
+  if (n.dist < hw + 5 || n.dist > hw + 30) return false;
+  if (Math.hypot(x - GREEN.x, z - GREEN.z) < GREEN.r + 10) return false;
+  if (Math.hypot(x - TEE.x, z - TEE.z) < 22) return false;
+  if (bunkerField(x, z) < 1.4) return false;
+  if (pondField(x, z) < 1.15) return false;
+  return true;
+}
+
+/**
+ * Species mix.
+ *
+ * `loblolly` is the important one, and the reason trunks carry a non-uniform
+ * scale: a mature pine here is a bare pole for most of its height with the
+ * canopy only in the top third. Cones sitting on the ground read as Christmas
+ * trees, which is what the treeline looked like before.
+ */
+const SPECIES = [
+  { key: 'loblolly', weight: 0.30 },
+  { key: 'pine', weight: 0.22 },
+  { key: 'broadleaf', weight: 0.24 },
+  { key: 'young', weight: 0.10 },
+  { key: 'dogwood', weight: 0.09 },
+  { key: 'maple', weight: 0.05 },
+];
+
+function pickSpecies(r) {
+  let acc = 0;
+  for (const s of SPECIES) { acc += s.weight; if (r <= acc) return s.key; }
+  return 'pine';
+}
+
 export function createTrees(toonRamp) {
   const group = new THREE.Group();
   group.name = 'trees';
   const rnd = mulberry32(20250727);
 
-  const trunks = [];
-  const blobs = [];
-  const pines = [];
+  const trunks = [];   // { x,y,z, rx, ry, rot } — non-uniform, for bare poles
+  const pines = [];    // { x,y,z, s, sy, rot, lean, hsl }
+  const blobs = [];    // { x,y,z, s, squash, rot, hsl }
+  const shrubs = [];   // { x,y,z, sx, sy, rot, hsl }
 
   const plant = (x, z, sizeScale) => {
     if (!plantable(x, z)) return;
     const y = heightAt(x, z);
     if (y < -0.5) return; // never standing in the pond bed
 
-    if (rnd() < 0.78) {
-      const s = lerp(1.7, 2.9, rnd()) * sizeScale;
-      pines.push({ x, y: y - 0.2, z, s, rot: rnd() * Math.PI * 2, v: rnd(), lean: rnd() });
+    const kind = pickSpecies(rnd());
+    const k = sizeScale;
+
+    if (kind === 'loblolly') {
+      // Tall bare pole, canopy only up top.
+      const trunkH = lerp(11, 17, rnd()) * k;
+      const girth = lerp(0.42, 0.60, rnd()) * k;
+      trunks.push({ x, y, z, rx: girth, ry: trunkH / 3.6, rot: rnd() * Math.PI * 2 });
+      pines.push({
+        x, y: y + trunkH * 0.58, z,
+        s: lerp(0.95, 1.35, rnd()) * k, sy: lerp(0.85, 1.15, rnd()),
+        rot: rnd() * Math.PI * 2, lean: rnd(),
+        hsl: [lerp(0.30, 0.35, rnd()), lerp(0.30, 0.42, rnd()), lerp(0.26, 0.36, rnd())],
+      });
       return;
     }
 
-    const s = lerp(1.4, 2.2, rnd()) * sizeScale;
-    trunks.push({ x, y, z, s, rot: rnd() * Math.PI * 2 });
-    // 2–3 overlapping blobs make a soft, full canopy.
-    const n = rnd() < 0.5 ? 3 : 2;
+    if (kind === 'pine') {
+      pines.push({
+        x, y: y - 0.2, z,
+        s: lerp(1.7, 2.9, rnd()) * k, sy: lerp(0.9, 1.25, rnd()),
+        rot: rnd() * Math.PI * 2, lean: rnd(),
+        hsl: [lerp(0.29, 0.36, rnd()), lerp(0.34, 0.48, rnd()), lerp(0.28, 0.42, rnd())],
+      });
+      return;
+    }
+
+    // Everything else is a trunk plus a cluster of canopy blobs; only the
+    // proportions and the colour change.
+    const spec = {
+      broadleaf: {
+        h: [1.5, 2.3], lo: 2, hi: 3, sz: [1.9, 2.5], sq: 0.95,
+        hsl: () => [lerp(0.22, 0.30, rnd()), lerp(0.42, 0.60, rnd()), lerp(0.40, 0.56, rnd())],
+      },
+      young: {
+        h: [0.7, 1.1], lo: 1, hi: 2, sz: [1.5, 2.0], sq: 1.05,
+        hsl: () => [lerp(0.24, 0.32, rnd()), lerp(0.46, 0.62, rnd()), lerp(0.44, 0.58, rnd())],
+      },
+      dogwood: {
+        h: [0.9, 1.3], lo: 2, hi: 3, sz: [1.6, 2.2], sq: 0.62,
+        hsl: () => [lerp(0.08, 0.16, rnd()), lerp(0.14, 0.30, rnd()), lerp(0.84, 0.93, rnd())],
+      },
+      maple: {
+        h: [1.1, 1.6], lo: 2, hi: 3, sz: [1.7, 2.2], sq: 0.90,
+        hsl: () => [lerp(0.96, 1.0, rnd()), lerp(0.42, 0.58, rnd()), lerp(0.34, 0.46, rnd())],
+      },
+    }[kind];
+
+    const s = lerp(spec.h[0], spec.h[1], rnd()) * k;
+    trunks.push({ x, y, z, rx: s, ry: s, rot: rnd() * Math.PI * 2 });
+    const n = Math.round(lerp(spec.lo, spec.hi, rnd()));
+    const base = spec.hsl();
     for (let i = 0; i < n; i++) {
       const a = rnd() * Math.PI * 2;
       const r = i === 0 ? 0 : lerp(0.5, 1.15, rnd());
@@ -129,9 +211,12 @@ export function createTrees(toonRamp) {
         x: x + Math.cos(a) * r * s,
         y: y + (3.1 + (i === 0 ? 0.5 : lerp(-0.35, 1.0, rnd()))) * s,
         z: z + Math.sin(a) * r * s,
-        s: (i === 0 ? lerp(1.9, 2.4, rnd()) : lerp(1.3, 1.9, rnd())) * s,
+        s: (i === 0 ? lerp(spec.sz[0], spec.sz[1], rnd()) : lerp(1.3, 1.9, rnd())) * s,
+        squash: spec.sq,
         rot: rnd() * Math.PI * 2,
-        v: rnd(),
+        tilt: lerp(-0.14, 0.14, rnd()),
+        // Slight drift around the tree's colour, so a canopy is not one flat shade.
+        hsl: [base[0] + lerp(-0.012, 0.012, rnd()), base[1], base[2] + lerp(-0.05, 0.05, rnd())],
       });
     }
   };
@@ -140,51 +225,73 @@ export function createTrees(toonRamp) {
   const zNear = TEE.z + 20;
   const zFar = WORLD_CZ - WORLD_SIZE * 0.44;
 
-  // Pass A — sparse specimen trees framing the corridor. Offsets are measured
-  // from the centreline, so the tree line curves with the dogleg.
+  // Pass A — the treeline proper, biased hard toward the corridor edge.
   for (let i = 0; i < 1100; i++) {
     const z = lerp(zNear, zFar, rnd());
     const side = rnd() < 0.5 ? 1 : -1;
-    // Biased hard toward the corridor edge, so the treeline is a wall rather
-    // than a scattering that thins out as it approaches the fairway.
     const off = lerp(16, 95, Math.pow(rnd(), 1.8));
     plant(centreXAt(z) + side * off + lerp(-7, 7, rnd()), z + lerp(-9, 9, rnd()), 1);
   }
 
-  // Pass B — the treeline proper, further out, quietly closing the world off.
+  // Pass B — deep forest behind it.
   for (let i = 0; i < 1500; i++) {
     const z = lerp(zNear + 30, zFar - 20, rnd());
     const side = rnd() < 0.5 ? 1 : -1;
     plant(centreXAt(z) + side * lerp(85, 260, rnd()), z, lerp(0.9, 1.3, rnd()));
   }
 
-  // Pass C — a scattered far forest that melts into the fog.
+  // Pass C — out to the property line.
   for (let i = 0; i < 1100; i++) {
     const a = rnd() * Math.PI * 2;
     const r = lerp(WORLD_SIZE * 0.20, WORLD_SIZE * 0.50, rnd());
     plant(WORLD_CX + Math.sin(a) * r, WORLD_CZ + Math.cos(a) * r, lerp(1.0, 1.5, rnd()));
   }
 
+  // Pass D — azaleas, in drifts along the front of the treeline. One colour
+  // per drift, so they read as planted beds rather than confetti.
+  for (let i = 0; i < 170; i++) {
+    const z = lerp(zNear, zFar, rnd());
+    const side = rnd() < 0.5 ? 1 : -1;
+    const cx = centreXAt(z) + side * lerp(22, 52, rnd());
+    if (!shrubbable(cx, z)) continue;
+
+    const white = rnd() < 0.3;
+    const hsl = white
+      ? [lerp(0.02, 0.10, rnd()), lerp(0.05, 0.18, rnd()), lerp(0.88, 0.95, rnd())]
+      : [lerp(0.90, 0.99, rnd()), lerp(0.50, 0.72, rnd()), lerp(0.52, 0.66, rnd())];
+
+    const count = 4 + Math.floor(rnd() * 7);
+    for (let j = 0; j < count; j++) {
+      const bx = cx + lerp(-7, 7, rnd());
+      const bz = z + lerp(-7, 7, rnd());
+      if (!shrubbable(bx, bz)) continue;
+      shrubs.push({
+        x: bx, y: heightAt(bx, bz) - 0.25, z: bz,
+        sx: lerp(1.1, 2.1, rnd()), sy: lerp(0.7, 1.2, rnd()),
+        rot: rnd() * Math.PI * 2,
+        hsl: [hsl[0] % 1, hsl[1], hsl[2] + lerp(-0.05, 0.05, rnd())],
+      });
+    }
+  }
+
   // ------------------------------------------------------------ build meshes
   const trunkGeo = new THREE.CylinderGeometry(0.26, 0.42, 3.6, 20, 1);
   trunkGeo.translate(0, 1.8, 0);
+  const canopyGeo = makeCanopyGeo();
 
   const meshes = {
-    trunk: new THREE.InstancedMesh(
-      trunkGeo,
+    trunk: new THREE.InstancedMesh(trunkGeo,
       new THREE.MeshToonMaterial({ color: 0x8d6547, gradientMap: toonRamp }),
-      Math.max(1, trunks.length)
-    ),
-    blob: new THREE.InstancedMesh(
-      makeCanopyGeo(),
+      Math.max(1, trunks.length)),
+    blob: new THREE.InstancedMesh(canopyGeo,
       new THREE.MeshToonMaterial({ color: 0xffffff, gradientMap: toonRamp }),
-      Math.max(1, blobs.length)
-    ),
-    pine: new THREE.InstancedMesh(
-      makePineGeo(),
+      Math.max(1, blobs.length)),
+    pine: new THREE.InstancedMesh(makePineGeo(),
       new THREE.MeshToonMaterial({ color: 0xffffff, gradientMap: toonRamp }),
-      Math.max(1, pines.length)
-    ),
+      Math.max(1, pines.length)),
+    shrub: new THREE.InstancedMesh(canopyGeo,
+      new THREE.MeshToonMaterial({ color: 0xffffff, gradientMap: toonRamp }),
+      Math.max(1, shrubs.length)),
   };
 
   const m = new THREE.Matrix4();
@@ -196,33 +303,37 @@ export function createTrees(toonRamp) {
 
   trunks.forEach((t, i) => {
     e.set(0, t.rot, 0);
-    m.compose(pos.set(t.x, t.y, t.z), q.setFromEuler(e), scl.set(t.s, t.s, t.s));
+    m.compose(pos.set(t.x, t.y, t.z), q.setFromEuler(e), scl.set(t.rx, t.ry, t.rx));
     meshes.trunk.setMatrixAt(i, m);
   });
 
   blobs.forEach((b, i) => {
-    e.set(lerp(-0.16, 0.16, b.v), b.rot, lerp(0.16, -0.16, b.v));
-    m.compose(pos.set(b.x, b.y, b.z), q.setFromEuler(e), scl.set(b.s, b.s * 0.94, b.s));
+    e.set(b.tilt, b.rot, -b.tilt);
+    m.compose(pos.set(b.x, b.y, b.z), q.setFromEuler(e), scl.set(b.s, b.s * b.squash, b.s));
     meshes.blob.setMatrixAt(i, m);
-    // Vary leaf colour gently — vibrant, but never noisy.
-    // Saturated and mid-toned: a pale canopy has nowhere for the ramp's bands
-    // to land, and the tree flattens into a silhouette.
-    col.setHSL(lerp(0.245, 0.31, b.v), lerp(0.46, 0.60, b.v), lerp(0.44, 0.32, b.v));
+    col.setHSL(b.hsl[0], b.hsl[1], b.hsl[2]);
     meshes.blob.setColorAt(i, col);
   });
 
   pines.forEach((p, i) => {
-    e.set(lerp(-0.05, 0.05, p.v), p.rot, lerp(0.05, -0.05, p.lean ?? p.v));
-    m.compose(pos.set(p.x, p.y, p.z), q.setFromEuler(e), scl.set(p.s, p.s * lerp(0.9, 1.2, p.v), p.s));
+    e.set(lerp(-0.05, 0.05, p.lean), p.rot, lerp(0.05, -0.05, p.lean));
+    m.compose(pos.set(p.x, p.y, p.z), q.setFromEuler(e), scl.set(p.s, p.s * p.sy, p.s));
     meshes.pine.setMatrixAt(i, m);
-    col.setHSL(lerp(0.29, 0.35, p.v), lerp(0.42, 0.54, p.v), lerp(0.40, 0.28, p.v));
+    col.setHSL(p.hsl[0], p.hsl[1], p.hsl[2]);
     meshes.pine.setColorAt(i, col);
   });
 
-  for (const mesh of Object.values(meshes)) {
-    mesh.count = mesh === meshes.trunk ? Math.max(1, trunks.length)
-               : mesh === meshes.blob ? Math.max(1, blobs.length)
-               : Math.max(1, pines.length);
+  shrubs.forEach((sh, i) => {
+    e.set(0, sh.rot, 0);
+    m.compose(pos.set(sh.x, sh.y, sh.z), q.setFromEuler(e), scl.set(sh.sx, sh.sy, sh.sx));
+    meshes.shrub.setMatrixAt(i, m);
+    col.setHSL(sh.hsl[0], sh.hsl[1], sh.hsl[2]);
+    meshes.shrub.setColorAt(i, col);
+  });
+
+  const counts = { trunk: trunks.length, blob: blobs.length, pine: pines.length, shrub: shrubs.length };
+  for (const [key, mesh] of Object.entries(meshes)) {
+    mesh.count = Math.max(1, counts[key]);
     mesh.instanceMatrix.needsUpdate = true;
     if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
     mesh.castShadow = true;
