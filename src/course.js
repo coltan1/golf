@@ -211,13 +211,18 @@ export function nearest(x, z, out = _n) {
   return out;
 }
 
-/** Fairway half-width in yards, interpolated along the width profile. */
+/**
+ * Fairway half-width in yards. The profile sets the broad shape; the two sine
+ * terms give the mown line an organic wander so it isn't a ruler-straight
+ * ribbon down the hole. Periods work out around 270 and 120 yards.
+ */
 export function fairwayHalfWidth(t) {
   const w = widthProfile;
   const f = clamp(t, 0, 1) * (w.length - 1);
   const i = Math.floor(f);
   const j = Math.min(w.length - 1, i + 1);
-  return lerp(w[i], w[j], f - i);
+  const base = lerp(w[i], w[j], f - i);
+  return base + 2.6 * Math.sin(t * 14.0 + 1.3) + 1.7 * Math.sin(t * 31.0 - 0.7);
 }
 
 /** Normalised distance inside an ellipse (1.0 = on the edge). */
@@ -343,9 +348,21 @@ export function heightAt(x, z) {
   );
   const path = cartPathAt(x, z, n);
   const unmown = (1 - mownTight) * (1 - path);
+  // Two octaves. The broad one gives the rough its rolling shape; the second
+  // works at roughly facet scale, and it is what makes the low-poly shading
+  // legible — flat facets only read as facets when neighbouring triangles
+  // actually differ in slope. Kept above ~18 yards so the mesh can resolve it.
   if (unmown > 0.001) {
-    h += unmown * 1.25 * fbm2(x * 0.072 + 11.3, z * 0.069 - 7.1);
+    h += unmown * (
+      1.6 * fbm2(x * 0.040 + 11.3, z * 0.038 - 7.1) +
+      1.1 * fbm2(x * 0.056 - 4.9, z * 0.054 + 8.3)
+    );
   }
+
+  // A whisper of the same everywhere except the putting surface. Far too small
+  // to affect a roll, but enough that facets near a band edge tip across it,
+  // which is what stops mown ground reading as one flat sheet of colour.
+  h += 0.30 * (1 - gb) * fbm2(x * 0.062 + 3.7, z * 0.060 - 5.1);
 
   // Grass height is real height. Rough is left long and the fairway and green
   // are cut short, so every mowing line has an actual lip at it — that step
@@ -451,9 +468,9 @@ export function makeCourseTexture(size = 1024) {
       mix(C.rough, C.roughAlt, mott, col);
 
       const dry = 0.5 + 0.5 * fbm2(x * 0.034 - 5.2, z * 0.037 + 4.4);
-      mix(col, C.roughDry, smoothstep(0.40, 0.88, dry) * 0.85, col);
+      mix(col, C.roughDry, smoothstep(0.46, 0.92, dry) * 0.34, col);
       const wet = 0.5 + 0.5 * fbm2(x * 0.048 + 9.6, z * 0.044 - 6.8);
-      mix(col, C.roughWet, smoothstep(0.44, 0.92, wet) * 0.8, col);
+      mix(col, C.roughWet, smoothstep(0.50, 0.96, wet) * 0.30, col);
 
       const deepen = smoothstep(50, 95, n.dist);
       mix(col, C.deep, deepen * 0.75, col);
