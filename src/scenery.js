@@ -194,7 +194,7 @@ export function createBackdrop(toonRamp) {
 // ---------------------------------------------------------------- clouds
 /** Soft puffy alpha blob, built from stacked radial gradients. */
 function makeCloudTexture() {
-  const S = 256;
+  const S = 512;
   const cv = document.createElement('canvas');
   cv.width = cv.height = S;
   const ctx = cv.getContext('2d');

@@ -93,7 +93,7 @@ function makePineGeo() {
  * "somewhere a tree is allowed" and "somewhere a tree is" are very different
  * regions, and straw spread over the first covers a lot of open rough.
  */
-const TMAP = 256;
+const TMAP = 512;
 let treeMap = null;            // Uint8Array, TMAP × TMAP
 let treeTex = null;            // the same data, for the terrain shader
 let treeOrigin = { x: 0, z: 0, size: 1 };
@@ -573,7 +573,7 @@ const toon = (color, ramp) => new THREE.MeshToonMaterial({ color, gradientMap: r
 
 /** Soft round alpha sprite, used for the chimney smoke. */
 function softPuffTexture() {
-  const S = 64;
+  const S = 256;
   const cv = document.createElement('canvas');
   cv.width = cv.height = S;
   const ctx = cv.getContext('2d');

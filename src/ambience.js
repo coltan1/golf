@@ -26,7 +26,7 @@ const SUN_DIR = new THREE.Vector3(135, -114, 55).normalize();
  * falloff is smooth in both axes at once.
  */
 function shaftTexture() {
-  const S = 64;
+  const S = 256;
   const cv = document.createElement('canvas');
   cv.width = cv.height = S;
   const ctx = cv.getContext('2d');
@@ -148,7 +148,7 @@ export function createSunRays() {
 // ---------------------------------------------------------------- butterflies
 /** One wing: a rounded blade hinged along its inner edge at x = 0. */
 function wingTexture() {
-  const S = 64;
+  const S = 256;
   const cv = document.createElement('canvas');
   cv.width = cv.height = S;
   const ctx = cv.getContext('2d');
@@ -317,7 +317,7 @@ export function createMotes() {
   geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
 
   const sprite = (() => {
-    const S = 32, cv = document.createElement('canvas');
+    const S = 128, cv = document.createElement('canvas');
     cv.width = cv.height = S;
     const ctx = cv.getContext('2d');
     const g = ctx.createRadialGradient(S / 2, S / 2, 0, S / 2, S / 2, S / 2);

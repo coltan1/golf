@@ -34,6 +34,20 @@ export class Hud {
     this._shotTimer = null;
   }
 
+  /** Bring the loading screen back for a hole change. */
+  showLoader(sub) {
+    const el = this.el.loader;
+    el.style.display = '';
+    // Force a reflow so the browser sees display and opacity change in two
+    // steps; set together, it skips the transition and the screen pops.
+    void el.offsetHeight;
+    el.classList.remove('hide');
+    if (sub) {
+      const s = document.getElementById('loaderSub');
+      if (s) s.textContent = sub;
+    }
+  }
+
   hideLoader() {
     this.el.loader.classList.add('hide');
     setTimeout(() => { this.el.loader.style.display = 'none'; }, 950);

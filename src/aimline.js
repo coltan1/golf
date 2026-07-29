@@ -14,7 +14,7 @@ const LENGTH = 24;
 const WIDTH = 1.6;
 
 function makeRibbonTexture() {
-  const W = 128, H = 32;
+  const W = 512, H = 128;
   const cv = document.createElement('canvas');
   cv.width = W; cv.height = H;
   const ctx = cv.getContext('2d');

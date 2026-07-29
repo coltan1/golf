@@ -84,7 +84,7 @@ const CUP_SPEED = 5.2;
 
 // --- soft round sprite, reused by the trail, the puff and the splash ---------
 function makeSoftSprite() {
-  const S = 64;
+  const S = 256;
   const cv = document.createElement('canvas');
   cv.width = cv.height = S;
   const ctx = cv.getContext('2d');

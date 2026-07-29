@@ -596,7 +596,7 @@ function mix(a, b, t, out) {
  * re-sharpened per-pixel in the terrain shader, which is the only way to get a
  * mowing line that still looks like a line when you're standing on it.
  */
-export function makeCourseTexture(size = 1024) {
+export function makeCourseTexture(size = 2048) {
   const cv = document.createElement('canvas');
   cv.width = cv.height = size;
   const ctx = cv.getContext('2d');
@@ -612,24 +612,74 @@ export function makeCourseTexture(size = 1024) {
   const tmp = [0, 0, 0];
   const n = { dist: 0, side: 0, perp: 0, t: 0, s: 0, i: 0 };
 
-  for (let py = 0; py < size; py++) {
-    // Canvas row 0 maps to the far end of the hole (uv v = 1).
-    const z = z0 + py * step;
-    for (let px = 0; px < size; px++) {
-      const x = x0 + px * step;
-      nearest(x, z, n);
+  // ------------------------------------------------------ the smooth fields
+  //
+  // Five fbm2 calls per texel, each stacking harmonics, are most of the cost
+  // of this bake — and they are the one part of it that does not need the
+  // resolution. What reads as a low-resolution course texture is never the
+  // mottling; it is the *edges*, the arc of a bunker or the line where the
+  // fairway stops, and those come from analytic fields that cost little.
+  //
+  // So the noise gets its own half-resolution grid and is interpolated up.
+  // Doubling the texture then costs roughly what the old one did, while every
+  // edge in it comes out twice as sharp. At the sizes used here the noise grid
+  // still lands under a yard per sample, which is where the finest harmonic
+  // in these fields bottoms out anyway; anything finer than that is the
+  // shader's turf grain, not this.
+  const NS = size >> 1;
+  const nstep = WORLD_SIZE / NS;
+  const cells = (NS + 1) * (NS + 1);
+  const fMott = new Float32Array(cells);
+  const fDry = new Float32Array(cells);
+  const fWet = new Float32Array(cells);
 
-      // --- base: rough, in layered patches ---
-      const mott = clamp(0.5 + 0.5 * (
+  for (let j = 0; j <= NS; j++) {
+    const z = z0 + j * nstep;
+    for (let i = 0; i <= NS; i++) {
+      const x = x0 + i * nstep;
+      const k = j * (NS + 1) + i;
+      fMott[k] = clamp(0.5 + 0.5 * (
         fbm2(x * 0.021, z * 0.019) * 0.46 +
         fbm2(x * 0.062 + 3.1, z * 0.058 - 1.4) * 0.33 +
         fbm2(x * 0.160 + 7.7, z * 0.150 + 2.2) * 0.21
       ), 0, 1);
+      fDry[k] = 0.5 + 0.5 * fbm2(x * 0.034 - 5.2, z * 0.037 + 4.4);
+      fWet[k] = 0.5 + 0.5 * fbm2(x * 0.048 + 9.6, z * 0.044 - 6.8);
+    }
+  }
+
+  /** Bilinear lookup into one of the fields above, at grid cell (i,j)+(fx,fy). */
+  const field = (f, i, j, fx, fy) => {
+    const row = j * (NS + 1) + i;
+    const a = f[row], b = f[row + 1];
+    const c = f[row + NS + 1], e = f[row + NS + 2];
+    const top = a + (b - a) * fx;
+    return top + ((c + (e - c) * fx) - top) * fy;
+  };
+
+  for (let py = 0; py < size; py++) {
+    // Canvas row 0 maps to the far end of the hole (uv v = 1).
+    const z = z0 + py * step;
+    // Where this row sits on the noise grid, and how far between samples.
+    const nv = (py * NS) / size;
+    const nj = Math.min(NS - 1, nv | 0);
+    const nfy = nv - nj;
+
+    for (let px = 0; px < size; px++) {
+      const x = x0 + px * step;
+      nearest(x, z, n);
+
+      const nu = (px * NS) / size;
+      const ni = Math.min(NS - 1, nu | 0);
+      const nfx = nu - ni;
+
+      // --- base: rough, in layered patches ---
+      const mott = field(fMott, ni, nj, nfx, nfy);
       mix(C.rough, C.roughAlt, mott, col);
 
-      const dry = 0.5 + 0.5 * fbm2(x * 0.034 - 5.2, z * 0.037 + 4.4);
+      const dry = field(fDry, ni, nj, nfx, nfy);
       mix(col, C.roughDry, smoothstep(0.44, 0.90, dry) * 0.58, col);
-      const wet = 0.5 + 0.5 * fbm2(x * 0.048 + 9.6, z * 0.044 - 6.8);
+      const wet = field(fWet, ni, nj, nfx, nfy);
       mix(col, C.roughWet, smoothstep(0.48, 0.94, wet) * 0.52, col);
 
       const deepen = smoothstep(50, 95, n.dist);

@@ -189,7 +189,15 @@ export function createTerrain(renderer, toonRamp, treeMap) {
   geo.setIndex(new THREE.BufferAttribute(indices, 1));
   geo.computeVertexNormals();
 
-  const map = new THREE.CanvasTexture(makeCourseTexture(1024));
+  const map = new THREE.CanvasTexture(makeCourseTexture(2048));
+  // The single biggest thing that can be done for how this reads. A golf hole
+  // is viewed almost entirely at a grazing angle, which is exactly the case
+  // trilinear filtering handles worst: it has to pick one mip for a footprint
+  // that is many times longer than it is wide, so it blurs along the short
+  // axis to avoid aliasing along the long one, and the turf goes to mush a
+  // dozen yards ahead of the ball. Anisotropic filtering samples the footprint
+  // properly and costs nothing on any GPU that will run this.
+  map.anisotropy = renderer.capabilities.getMaxAnisotropy();
   map.colorSpace = THREE.SRGBColorSpace;
   map.anisotropy = Math.min(8, renderer.capabilities.getMaxAnisotropy());
   map.wrapS = map.wrapT = THREE.ClampToEdgeWrapping;

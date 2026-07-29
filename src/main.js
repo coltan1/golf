@@ -159,6 +159,22 @@ function toggleFreeCam(force) {
   return freeCam.active;
 }
 
+/**
+ * Run `fn` once the browser has actually painted.
+ *
+ * A long synchronous build has to be deferred past a paint or whatever was
+ * put on screen to cover it never appears — the frame it would have been
+ * drawn in is the frame that is busy. Two animation frames is the reliable
+ * way to wait for one, and the timer covers a background tab, which is
+ * given no animation frames at all.
+ */
+function afterPaint(fn) {
+  let done = false;
+  const go = () => { if (done) return; done = true; fn(); };
+  requestAnimationFrame(() => requestAnimationFrame(go));
+  setTimeout(go, 60);
+}
+
 // ---------------------------------------------------------------- game state
 const game = {
   state: 'intro',      // intro | ready | charging | swinging | watching | settling | done
@@ -383,7 +399,13 @@ function wireInput() {
   hud.onAgain(() => {
     hud.hideCard();
     const last = game.holeIndex === HOLES.length - 1;
-    if (last) { game.total = 0; loadHole(0); } else loadHole(game.holeIndex + 1);
+    const next = last ? 0 : game.holeIndex + 1;
+    if (last) game.total = 0;
+    // Building a hole blocks for well over a second, most of it baking the
+    // course texture. Put the loader up first so that time reads as loading
+    // rather than as the game having frozen.
+    hud.showLoader(`${HOLES[next].n}. ${HOLES[next].name}`);
+    afterPaint(() => { loadHole(next); hud.hideLoader(); });
   });
   hud.onSound((on) => audio.setEnabled(on));
 
