@@ -42,39 +42,40 @@ function makeCanopyGeo() {
 }
 
 /**
- * Conifer built from one lathe. The profile bulges and pinches to make the
- * rounded tiers, then each tier's rim is scalloped around its circumference
- * so the silhouette is bumpy rather than a clean surface of revolution —
- * that lumpy branch edge is a lot of what sells the reference tree.
+ * Conifer built from one lathe.
+ *
+ * Mid-poly wants a rounded silhouette, so the profile carries five soft tiers
+ * with eased shoulders rather than a stack of cones, and the radial count is
+ * high enough that the outline reads as a curve. The tier rims are then
+ * scalloped around the circumference so the shape is not a clean surface of
+ * revolution.
  *
  * Geometry stays indexed and smooth-normalled: with a hard cel ramp, smooth
- * normals are what produce clean curved bands. Flat shading would give you
- * facets instead, which is a different (and busier) look.
+ * normals give clean curved bands, where flat shading would give facets.
  */
 function makePineGeo() {
   const profile = [
-    [0.00, 0.00], [1.55, 0.05], [1.95, 0.34], [1.70, 0.74], [1.24, 1.04],
-    [1.72, 1.34], [1.86, 1.64], [1.55, 2.04], [1.10, 2.34],
-    [1.48, 2.64], [1.58, 2.94], [1.28, 3.34], [0.92, 3.64],
-    [1.22, 3.94], [1.28, 4.24], [1.00, 4.64], [0.68, 4.94],
-    [0.90, 5.24], [0.88, 5.54], [0.62, 5.94], [0.34, 6.35],
-    [0.14, 6.80], [0.00, 7.10],
+    [0.00, 0.00], [1.15, 0.05], [1.78, 0.22], [2.00, 0.52],
+    [1.84, 0.86], [1.48, 1.14], [1.18, 1.32],
+    [1.62, 1.54], [1.86, 1.84], [1.72, 2.16], [1.40, 2.44], [1.10, 2.62],
+    [1.48, 2.84], [1.68, 3.12], [1.56, 3.42], [1.26, 3.68], [0.98, 3.84],
+    [1.30, 4.06], [1.44, 4.34], [1.32, 4.62], [1.06, 4.86], [0.82, 5.00],
+    [1.02, 5.22], [1.10, 5.48], [0.96, 5.76], [0.74, 6.00],
+    [0.52, 6.32], [0.30, 6.68], [0.12, 6.96], [0.00, 7.15],
   ].map(([x, y]) => new THREE.Vector2(x, y));
 
-  // 24 segments with 6 lobes gives exactly 4 samples per scallop — any
-  // frequency that divides the segment count lands on the zero crossings and
-  // the scallop silently disappears.
-  const SEGS = 20, LOBES = 5;
+  // 28 segments with 7 lobes gives exactly 4 samples per scallop. Any lobe
+  // count that divides the segment count lands on the zero crossings and the
+  // scallop silently disappears.
+  const SEGS = 28, LOBES = 7;
   const geo = new THREE.LatheGeometry(profile, SEGS);
   const p = geo.attributes.position;
   for (let i = 0; i < p.count; i++) {
     const x = p.getX(i), y = p.getY(i), z = p.getZ(i);
     const r = Math.hypot(x, z);
     if (r < 1e-4) continue;
-    // Scallop strength rises with radius, so the tier rims bump out while the
-    // pinched waists between them stay tight.
     const theta = Math.atan2(z, x);
-    const k = 1 + Math.sin(theta * LOBES) * 0.11 * Math.min(1, r / 1.2);
+    const k = 1 + Math.sin(theta * LOBES) * 0.10 * Math.min(1, r / 1.2);
     p.setXYZ(i, x * k, y, z * k);
   }
   geo.computeVertexNormals();
@@ -113,14 +114,14 @@ export function createTrees(toonRamp) {
 
     if (rnd() < 0.78) {
       const s = lerp(1.7, 2.9, rnd()) * sizeScale;
-      pines.push({ x, y: y - 0.2, z, s, rot: rnd() * Math.PI * 2, v: rnd() });
+      pines.push({ x, y: y - 0.2, z, s, rot: rnd() * Math.PI * 2, v: rnd(), lean: rnd() });
       return;
     }
 
     const s = lerp(1.4, 2.2, rnd()) * sizeScale;
     trunks.push({ x, y, z, s, rot: rnd() * Math.PI * 2 });
     // 2–3 overlapping blobs make a soft, full canopy.
-    const n = rnd() < 0.55 ? 3 : 2;
+    const n = rnd() < 0.5 ? 3 : 2;
     for (let i = 0; i < n; i++) {
       const a = rnd() * Math.PI * 2;
       const r = i === 0 ? 0 : lerp(0.5, 1.15, rnd());
@@ -211,7 +212,7 @@ export function createTrees(toonRamp) {
   });
 
   pines.forEach((p, i) => {
-    e.set(0, p.rot, 0);
+    e.set(lerp(-0.05, 0.05, p.v), p.rot, lerp(0.05, -0.05, p.lean ?? p.v));
     m.compose(pos.set(p.x, p.y, p.z), q.setFromEuler(e), scl.set(p.s, p.s * lerp(0.9, 1.2, p.v), p.s));
     meshes.pine.setMatrixAt(i, m);
     col.setHSL(lerp(0.29, 0.35, p.v), lerp(0.42, 0.54, p.v), lerp(0.40, 0.28, p.v));
@@ -297,6 +298,7 @@ function makeCabin(w, d, h, ramp, opts = {}) {
   const wallColor = opts.wall ?? 0xd9a76a;
   const roofColor = opts.roof ?? 0xc25f4a;
 
+  const roofMat = toon(roofColor, ramp);
   const body = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), toon(wallColor, ramp));
   body.position.y = h / 2;
   body.castShadow = body.receiveShadow = true;
@@ -313,26 +315,65 @@ function makeCabin(w, d, h, ramp, opts = {}) {
   g.add(gable);
 
   // Roof: two slabs leaning against each other over the gable.
-  const slabLen = (w / 2) / Math.cos(0.62) + 1.0;
-  const roofMat = toon(roofColor, ramp);
+  const slabLen = (w / 2) / Math.cos(0.62) + 1.5;
   for (const s of [-1, 1]) {
-    const slab = new THREE.Mesh(new THREE.BoxGeometry(slabLen, 0.34, d + 1.6), roofMat);
+    const slab = new THREE.Mesh(new THREE.BoxGeometry(slabLen, 0.30, d + 2.0), roofMat);
     slab.position.set(s * (w / 4) * 1.02, h + rise / 2, 0);
     slab.rotation.z = -s * 0.62;
     slab.castShadow = slab.receiveShadow = true;
     g.add(slab);
+    // Fascia along the eave, so the roof has a visible thickness rather than
+    // ending in a bare edge.
+    const fascia = new THREE.Mesh(new THREE.BoxGeometry(0.14, 0.30, d + 2.0), toon(0x8a5a48, ramp));
+    fascia.position.set(s * (slabLen / 2 - 0.07), 0, 0);
+    slab.add(fascia);
   }
 
-  // Warm windows and a door.
+  // Warm windows, framed, with a sill.
   const winMat = new THREE.MeshBasicMaterial({ color: 0xffdf9c });
+  const trimMat = toon(0xf3ead8, ramp);
+  const ww = w * 0.19, wh = h * 0.28;
   for (const s of [-1, 1]) {
-    const win = new THREE.Mesh(new THREE.BoxGeometry(w * 0.19, h * 0.28, 0.2), winMat);
-    win.position.set(s * w * 0.26, h * 0.6, d / 2 + 0.02);
+    const cx = s * w * 0.26, cy = h * 0.6;
+    const frame = new THREE.Mesh(new THREE.BoxGeometry(ww + 0.16, wh + 0.16, 0.1), trimMat);
+    frame.position.set(cx, cy, d / 2 + 0.02);
+    frame.castShadow = true;
+    g.add(frame);
+    const win = new THREE.Mesh(new THREE.BoxGeometry(ww, wh, 0.2), winMat);
+    win.position.set(cx, cy, d / 2 + 0.06);
     g.add(win);
+    // Glazing bar, and a sill that catches the light.
+    const bar = new THREE.Mesh(new THREE.BoxGeometry(0.045, wh, 0.22), trimMat);
+    bar.position.set(cx, cy, d / 2 + 0.07);
+    g.add(bar);
+    const sill = new THREE.Mesh(new THREE.BoxGeometry(ww + 0.3, 0.075, 0.22), trimMat);
+    sill.position.set(cx, cy - wh / 2 - 0.11, d / 2 + 0.08);
+    sill.castShadow = true;
+    g.add(sill);
   }
+
   const door = new THREE.Mesh(new THREE.BoxGeometry(w * 0.17, h * 0.48, 0.2), toon(0x8f6244, ramp));
-  door.position.set(0, h * 0.24, d / 2 + 0.02);
+  door.position.set(0, h * 0.24, d / 2 + 0.04);
   g.add(door);
+  const doorFrame = new THREE.Mesh(new THREE.BoxGeometry(w * 0.17 + 0.14, h * 0.48 + 0.09, 0.1), trimMat);
+  doorFrame.position.set(0, h * 0.24 + 0.03, d / 2 + 0.02);
+  g.add(doorFrame);
+
+  // Porch: a small roof on two posts over the door, plus a step.
+  const porch = new THREE.Mesh(new THREE.BoxGeometry(w * 0.42, 0.16, 1.5), roofMat);
+  porch.position.set(0, h * 0.62, d / 2 + 0.7);
+  porch.castShadow = true;
+  g.add(porch);
+  for (const s of [-1, 1]) {
+    const post = new THREE.Mesh(new THREE.CylinderGeometry(0.07, 0.07, h * 0.62, 12), trimMat);
+    post.position.set(s * w * 0.18, h * 0.31, d / 2 + 1.3);
+    post.castShadow = true;
+    g.add(post);
+  }
+  const step = new THREE.Mesh(new THREE.BoxGeometry(w * 0.34, 0.14, 0.8), trimMat);
+  step.position.set(0, 0.07, d / 2 + 0.85);
+  step.receiveShadow = true;
+  g.add(step);
 
   if (opts.chimney) {
     const ch = new THREE.Mesh(new THREE.BoxGeometry(1.0, 3.0, 1.0), toon(0xb9705a, ramp));

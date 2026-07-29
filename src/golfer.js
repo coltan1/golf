@@ -48,6 +48,10 @@ const COL = {
   shaft: 0xdde3e8,
   head: 0xc3ccd3,
   grip: 0x333b42,
+  belt: 0x4a5560,
+  buckle: 0xd8c98a,
+  ferrule: 0x2b3238,
+  face: 0xdfe6ea,
 };
 
 export class Golfer {
@@ -125,6 +129,11 @@ export class Golfer {
     // A soft collar reads as a polo without any extra geometry cost.
     const collar = this._mesh(new THREE.TorusGeometry(0.155, 0.055, 16, 40), COL.collar, this.torso, [0, 0.50, 0]);
     collar.rotation.x = Math.PI / 2;
+    // Belt at the waist: a small band, but it separates shirt from shorts and
+    // stops the torso reading as one moulded lump.
+    const belt = this._mesh(new THREE.CylinderGeometry(0.30, 0.30, 0.085, 32), COL.belt, this.torso, [0, -0.11, 0]);
+    belt.scale.set(0.94, 1, 1.02);
+    this._mesh(new THREE.BoxGeometry(0.085, 0.075, 0.03), COL.buckle, this.torso, [-0.28, -0.11, 0]);
 
     this.head = new THREE.Group();
     this.head.position.y = 0.60;
@@ -173,10 +182,22 @@ export class Golfer {
       [0, -shaftLen / 2, 0]);
     this._mesh(new THREE.CylinderGeometry(0.045, 0.042, 0.30, 20), COL.grip, this.wrist, [0, -0.10, 0]);
 
+    // Ferrule and hosel, then the head. Three small pieces, but a club that
+    // just ends in a blob is the first thing that reads as untooled.
+    this._mesh(new THREE.CylinderGeometry(0.040, 0.046, 0.075, 16), COL.ferrule, this.wrist,
+      [0, -shaftLen + 0.09, 0]);
+    const hosel = this._mesh(new THREE.CylinderGeometry(0.036, 0.040, 0.13, 16), COL.head, this.wrist,
+      [-0.005, -shaftLen + 0.04, 0.005]);
+    hosel.rotation.z = 0.10;
+
     const head = this._mesh(new THREE.SphereGeometry(0.13, 28, 20), COL.head, this.wrist,
       [-0.02, -shaftLen + 0.02, 0.05]);
     head.scale.set(0.9, 0.72, 1.5);
     this.clubHead = head;
+    // Flat striking face, slightly proud so it catches the light separately.
+    const face = this._mesh(new THREE.BoxGeometry(0.017, 0.155, 0.30), COL.face, this.wrist,
+      [-0.128, -shaftLen + 0.02, 0.05]);
+    face.rotation.z = -0.06;
 
     // Cache rest positions so idle motion can nudge them.
     this._hipsY = this.hips.position.y;
