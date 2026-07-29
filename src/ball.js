@@ -14,7 +14,7 @@ import * as THREE from 'three';
 import { clamp, lerp, smoothstep } from './util.js';
 import {
   heightAt, surfaceHeightAt, gradientAt, surfaceAt, isOutOfBounds,
-  distToHole, HOLE_POS, WATER_Y,
+  distToHole, HOLE_POS, waterLevelAt,
 } from './course.js';
 
 // --- clubs -------------------------------------------------------------------
@@ -337,7 +337,11 @@ export class Ball {
   _physics(dt) {
     const s = surfaceAt(this.pos.x, this.pos.z);
 
-    if (s === 'water' && this.pos.y <= WATER_Y + RADIUS + 0.2) return this._splash();
+    // A hole can carry a pond and a creek at different levels, so ask which
+    // body governs this spot rather than assuming one waterline.
+    if (s === 'water' && this.pos.y <= waterLevelAt(this.pos.x, this.pos.z) + RADIUS + 0.2) {
+      return this._splash();
+    }
 
     const sp = SURF[s] ?? SURF.rough;
     const rollScale = this.club === CLUBS.putter ? 1 : this.club.roll;
@@ -432,7 +436,7 @@ export class Ball {
   _splash() {
     this.state = 'splash';
     this.vel.set(0, 0, 0);
-    this.pos.y = WATER_Y;
+    this.pos.y = waterLevelAt(this.pos.x, this.pos.z);
     this.mesh.visible = false;
     this._popRing(0x9fe4f0, 4.5, 1.1);
     for (let i = 0; i < 14; i++) {

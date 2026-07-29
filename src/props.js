@@ -12,7 +12,7 @@ import { mulberry32, lerp, hash3, clamp } from './util.js';
 import {
   heightAt, nearest, centreXAt, fairwayHalfWidth, bunkerField, pondField,
   GREEN, HOLE_POS, TEE, WORLD_CX, WORLD_CZ, WORLD_SIZE,
-  greenEdge, bunkerEdge, cartPathAt,
+  greenEdge, bunkerEdge, cartPathAt, CREEK,
 } from './course.js';
 
 // ---------------------------------------------------------------- geometry
@@ -727,4 +727,98 @@ export function createTeeMarkers(ramp) {
     group.add(m);
   }
   return group;
+}
+
+// ---------------------------------------------------------------- bridge
+/**
+ * A stone arch bridge over the creek.
+ *
+ * The arches are built from voussoirs — a ring of small blocks stepped around
+ * a semicircle. Modelling them as actual openings would need the solid to have
+ * holes cut in it, which means CSG; stepping blocks around the arc gives the
+ * same read for a handful of boxes and no boolean geometry at all.
+ *
+ * It places itself wherever the creek passes closest to the line of play,
+ * which on a hole whose creek crosses in front of the green is exactly where
+ * you would walk over it.
+ */
+export function createBridge(ramp) {
+  if (!CREEK || CREEK.pts.length < 2) return null;
+
+  // Find the point on the creek nearest the centreline, and the direction
+  // across it there.
+  let best = null, bestD = Infinity;
+  for (let i = 0; i < CREEK.pts.length - 1; i++) {
+    const a = CREEK.pts[i], b = CREEK.pts[i + 1];
+    for (let k = 0; k <= 4; k++) {
+      const t = k / 4;
+      const x = lerp(a.x, b.x, t), z = lerp(a.z, b.z, t);
+      const d = nearest(x, z).dist;
+      if (d < bestD) {
+        const dx = b.x - a.x, dz = b.z - a.z;
+        const len = Math.hypot(dx, dz) || 1;
+        bestD = d;
+        best = { x, z, nx: -dz / len, nz: dx / len };
+      }
+    }
+  }
+  if (!best) return null;
+
+  const g = new THREE.Group();
+  g.name = 'bridge';
+  g.position.set(best.x, CREEK.y, best.z);
+  // Local +X points across the creek.
+  g.rotation.y = Math.atan2(-best.nz, best.nx);
+
+  const stone = toon(0xb9b2a4, ramp);
+  const stoneDark = toon(0x9c958a, ramp);
+
+  const span = CREEK.w * 2 + 7;      // reaches onto dry bank at both ends
+  const deckW = 4.2;                 // how wide the crossing is
+  const deckY = 2.5;                 // deck height above the waterline
+  const piers = [-span * 0.5, 0, span * 0.5];
+  const pierW = { end: 2.6, mid: 1.6 };
+
+  const box = (w, h, d, x, y, z, mat) => {
+    const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), mat);
+    m.position.set(x, y, z);
+    m.castShadow = m.receiveShadow = true;
+    g.add(m);
+    return m;
+  };
+
+  // Abutments at each end and a pier in the middle.
+  for (const px of piers) {
+    box(px === 0 ? pierW.mid : pierW.end, deckY, deckW, px, deckY / 2 - 0.6, 0, stoneDark);
+  }
+
+  // Two arch rings of voussoirs.
+  //
+  // Segmental, not semicircular. A semicircle over an opening this wide would
+  // rise higher than the deck and the blocks would burst through the roadway;
+  // the crown has to tuck just under it, so the ring is an ellipse — wide span,
+  // shallow rise — with each block laid along the local tangent.
+  const halfOpen = (span * 0.5 - pierW.end / 2 - pierW.mid / 2) / 2;
+  const openings = [-(halfOpen + pierW.mid / 2), halfOpen + pierW.mid / 2];
+  const spring = 0.35;
+  const rise = deckY - 0.75 - spring;
+
+  for (const cx of openings) {
+    const BLOCKS = 13;
+    for (let i = 0; i < BLOCKS; i++) {
+      const a = Math.PI * (i + 0.5) / BLOCKS;   // 0..π across the opening
+      const bx = cx + Math.cos(a) * halfOpen;
+      const by = spring + Math.sin(a) * rise;
+      const blk = box(halfOpen * 0.30, 0.42, deckW + 0.2, bx, by, 0, stone);
+      blk.rotation.z = Math.atan2(rise * Math.cos(a), -halfOpen * Math.sin(a));
+    }
+  }
+
+  // Deck, then a low parapet down each side.
+  box(span + 1.0, 0.45, deckW + 0.5, 0, deckY - 0.1, 0, stone);
+  for (const s of [-1, 1]) {
+    box(span + 1.0, 0.7, 0.4, 0, deckY + 0.45, s * (deckW / 2 + 0.16), stoneDark);
+  }
+
+  return g;
 }

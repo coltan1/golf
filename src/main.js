@@ -11,11 +11,13 @@ import * as THREE from 'three';
 import { clamp, lerp } from './util.js';
 import {
   heightAt, surfaceAt, distToHole, aimPointAhead,
-  HOLE_POS, TEE, PAR, HOLE_LENGTH, HOLE, setHole, POND,
+  HOLE_POS, TEE, PAR, HOLE_LENGTH, HOLE, setHole, POND, CREEK,
 } from './course.js';
-import { createTerrain, createWater, makeToonRamp, makeGroundRamp } from './terrain.js';
+import { createTerrain, createWater, createCreek, makeToonRamp, makeGroundRamp } from './terrain.js';
 import { createSky, createLights, createClouds, createBackdrop, FOG_COLOR } from './scenery.js';
-import { createTrees, createGrass, createClubhouse, createFlag, createTeeMarkers } from './props.js';
+import {
+  createTrees, createGrass, createClubhouse, createFlag, createTeeMarkers, createBridge,
+} from './props.js';
 import { Golfer } from './golfer.js';
 import { Ball, CLUBS, pickClub } from './ball.js';
 import { SwipeSwing } from './input.js';
@@ -53,7 +55,7 @@ const hud = new Hud();
 const audio = new Audio();
 
 // ---------------------------------------------------------------- world
-let terrain, water, clouds, flag, clubhouse, golfer, ball, rig, aimLine, input, lights, freeCam;
+let terrain, water, creek, clouds, flag, clubhouse, golfer, ball, rig, aimLine, input, lights, freeCam;
 
 // Everything belonging to the current hole hangs off this, so switching holes
 // is a matter of disposing one subtree rather than tracking every object.
@@ -89,9 +91,11 @@ function buildWorld() {
 
   terrain = add(createTerrain(renderer, groundRamp));
 
-  // Most holes have no water at all; createWater() reads the pond dimensions,
-  // so it must not be called when there isn't one.
+  // Most holes have no water at all, and the constructors read their feature's
+  // dimensions, so neither may be called when that feature is absent.
   water = POND ? add(createWater()) : null;
+  creek = CREEK ? add(createCreek()) : null;
+  if (CREEK) { const b = createBridge(ramp); if (b) add(b); }
 
   add(createTrees(ramp));
   add(createGrass(ramp));
@@ -418,6 +422,7 @@ function frame() {
   aimLine.update(dt);
   clouds.userData.tick(dt);
   if (water) water.userData.tick(time);
+  if (creek) creek.userData.tick(time);
   flag.userData.tick(time);
   clubhouse.userData.tick(dt);
 

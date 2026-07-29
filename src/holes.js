@@ -14,6 +14,11 @@
  *   off   yards left (-) or right (+) of the centreline at that point
  *   elev  height in yards relative to the tee, sampled evenly tee to green
  *
+ * Water comes in two forms. `water` is a closed body — a pond, with an
+ * irregular bank. `creek` is a *path*: a polyline of path-relative points with
+ * a half-width, which is what Rae's Creek actually is and what no amount of
+ * blob-shaping will imitate.
+ *
  * course.js resolves them to world positions once the centreline is built.
  */
 
@@ -180,7 +185,10 @@ export const HOLES = [
       { at: 172, off: -12, rx: 8, rz: 5, rot: 0.38 },
       { at: 174, off: 12, rx: 8, rz: 5, rot: 0.38 },
     ],
-    water: { at: 116, off: 0, rx: 34, rz: 9, rot: 0.30 },
+    creek: {
+      width: 5,
+      points: [[96, -62], [104, -34], [112, -8], [120, 18], [130, 44], [144, 70]],
+    },
     mounds: [{ at: 186, off: 0, r: 26, h: 4.6 }],
   },
   {
@@ -196,7 +204,17 @@ export const HOLES = [
       { at: 572, off: 2, rx: 10, rz: 6, rot: 0.1 },
       { at: 570, off: 20, rx: 9, rz: 6, rot: 0.3 },
     ],
-    water: { at: 522, off: -26, rx: 26, rz: 13, rot: -0.35 },
+    creek: {
+      width: 6,
+      // Up the left the whole way, then across the front of the green. It has
+      // to turn well short of it: the green is centred at 542 and reaches back
+      // to about 526, and a creek crossing at 548 runs straight through the
+      // putting surface, which makes the hole literally unholeable.
+      points: [
+        [250, -76], [330, -70], [410, -62], [468, -54], [498, -46],
+        [510, -28], [514, -4], [510, 20], [502, 42],
+      ],
+    },
     mounds: [{ at: 590, off: 24, r: 24, h: 3.6 }],
   },
   {

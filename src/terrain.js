@@ -14,7 +14,7 @@
 
 import * as THREE from 'three';
 import {
-  WORLD_SIZE, WORLD_CX, WORLD_CZ, WATER_Y, POND, MOW_PERIOD, CART_PATH,
+  WORLD_SIZE, WORLD_CX, WORLD_CZ, WATER_Y, POND, CREEK, MOW_PERIOD, CART_PATH,
   SURFACE_COLORS, heightAt, makeCourseTexture, nearest, fairwayHalfWidth, greenEdge,
   bunkerEdge,
 } from './course.js';
@@ -354,58 +354,38 @@ export function createTerrain(renderer, toonRamp) {
  * Everything animates in the shader from one `uTime` uniform, so there's no
  * per-frame vertex work and no normal recomputation at all.
  */
-export function createWater() {
-  const SEG = 72;
-  // The plane overhangs the pond and the shader discards everything outside
-  // the outline, so the waterline is the true shore rather than a square edge.
-  // It has to overhang generously: the harmonics push the bank out to about
-  // 1.4x the nominal radius at its furthest, and a plane sized for the plain
-  // ellipse would slice the bays clean off.
-  const geo = new THREE.PlaneGeometry(POND.rx * 3.0, POND.rz * 3.0, SEG, SEG);
-  geo.rotateX(-Math.PI / 2);
-
-  const uniforms = {
+// ---------------------------------------------------------------- water
+/**
+ * Colours and time, shared by every body of water on a hole.
+ *
+ * The pond adds its outline harmonics on top; the creek needs none, because
+ * its shape is the geometry.
+ */
+function waterUniforms() {
+  return {
     uTime: { value: 0 },
-    uRadii: { value: new THREE.Vector2(POND.rx, POND.rz) },
-    // Same three harmonics course.js uses, so the rendered waterline and the
-    // basin carved into the terrain are the same curve.
-    uWobA: { value: new THREE.Vector3(POND.h[0], POND.h[2], POND.h[4]) },
-    uWobP: { value: new THREE.Vector3(POND.h[1], POND.h[3], POND.h[5]) },
     uDeep: { value: new THREE.Color(0x1c6b86) },
     uShallow: { value: new THREE.Color(0x63cbd8) },
     uCrest: { value: new THREE.Color(0xd6f4fa) },
     uFoam: { value: new THREE.Color(0xffffff) },
   };
+}
 
-  const mat = new THREE.MeshBasicMaterial({ transparent: true });
-
-  mat.onBeforeCompile = (shader) => {
-    Object.assign(shader.uniforms, uniforms);
-
-    shader.vertexShader = shader.vertexShader
-      .replace('#include <common>', `#include <common>
-        uniform float uTime;
-        uniform vec2 uRadii;
-        uniform vec3 uWobA;
-        uniform vec3 uWobP;
-        varying vec2 vLocal;
-        varying float vField;`)
-      .replace('#include <begin_vertex>', `#include <begin_vertex>
-        vLocal = vec2(position.x, position.z);
-        // 1.0 is exactly the shoreline. Matches shapeField() in course.js.
-        vec2 e = vLocal / uRadii;
-        float rr = length(e);
-        float aa = atan(e.y, e.x);
-        float kk = 1.0 + uWobA.x * sin(aa * 2.0 + uWobP.x)
-                       + uWobA.y * sin(aa * 3.0 + uWobP.y)
-                       + uWobA.z * sin(aa * 5.0 + uWobP.z);
-        vField = rr / kk;
-        transformed.y +=
-          0.16 * sin(position.x * 0.13 + uTime * 0.55) +
-          0.11 * sin(position.z * 0.17 - uTime * 0.42) +
-          0.07 * sin((position.x + position.z) * 0.09 + uTime * 0.80);`);
-
-    shader.fragmentShader = shader.fragmentShader
+/**
+ * The stylised water surface, applied to a fragment shader.
+ *
+ * Deliberately unlit. Toon lighting on a rippling surface gives bands that
+ * follow the wave normals, which reads as shiny plastic; cartoon water wants
+ * flat shapes drawn *on* the surface instead. So the colour is authored: a
+ * depth gradient from turquoise shallows to deep teal, hard-thresholded crest
+ * highlights drifting across it, and foam hugging the bank.
+ *
+ * The only thing it asks of the geometry is `vField` — 0 at the middle of the
+ * water, 1 at the bank. A pond gets that from a radial outline, a creek from
+ * its across-strip coordinate, and neither needs to know about the other.
+ */
+function waterFragment(src) {
+  return src
       .replace('#include <common>', `#include <common>
         uniform float uTime;
         uniform vec3 uDeep;
@@ -444,6 +424,52 @@ export function createWater() {
         diffuseColor.rgb = water;
         // Shallows are more see-through; foam is nearly solid.
         diffuseColor.a = max(mix(0.74, 0.93, depth), foam * 0.95);`);
+}
+
+export function createWater() {
+  const SEG = 72;
+  // The plane overhangs the pond and the shader discards everything outside
+  // the outline, so the waterline is the true shore rather than a square edge.
+  // It has to overhang generously: the harmonics push the bank out to about
+  // 1.4x the nominal radius at its furthest, and a plane sized for the plain
+  // ellipse would slice the bays clean off.
+  const geo = new THREE.PlaneGeometry(POND.rx * 3.0, POND.rz * 3.0, SEG, SEG);
+  geo.rotateX(-Math.PI / 2);
+
+  const uniforms = Object.assign(waterUniforms(), {
+    uRadii: { value: new THREE.Vector2(POND.rx, POND.rz) },
+    // Same three harmonics course.js uses, so the rendered waterline and the
+    // basin carved into the terrain are the same curve.
+    uWobA: { value: new THREE.Vector3(POND.h[0], POND.h[2], POND.h[4]) },
+    uWobP: { value: new THREE.Vector3(POND.h[1], POND.h[3], POND.h[5]) },
+  });
+
+  const mat = new THREE.MeshBasicMaterial({ transparent: true });
+  mat.onBeforeCompile = (shader) => {
+    Object.assign(shader.uniforms, uniforms);
+    shader.vertexShader = shader.vertexShader
+      .replace('#include <common>', `#include <common>
+        uniform float uTime;
+        uniform vec2 uRadii;
+        uniform vec3 uWobA;
+        uniform vec3 uWobP;
+        varying vec2 vLocal;
+        varying float vField;`)
+      .replace('#include <begin_vertex>', `#include <begin_vertex>
+        vLocal = vec2(position.x, position.z);
+        // 1.0 is exactly the shoreline. Matches shapeField() in course.js.
+        vec2 e = vLocal / uRadii;
+        float rr = length(e);
+        float aa = atan(e.y, e.x);
+        float kk = 1.0 + uWobA.x * sin(aa * 2.0 + uWobP.x)
+                       + uWobA.y * sin(aa * 3.0 + uWobP.y)
+                       + uWobA.z * sin(aa * 5.0 + uWobP.z);
+        vField = rr / kk;
+        transformed.y +=
+          0.16 * sin(position.x * 0.13 + uTime * 0.55) +
+          0.11 * sin(position.z * 0.17 - uTime * 0.42) +
+          0.07 * sin((position.x + position.z) * 0.09 + uTime * 0.80);`);
+    shader.fragmentShader = waterFragment(shader.fragmentShader);
   };
 
   const mesh = new THREE.Mesh(geo, mat);
@@ -452,4 +478,100 @@ export function createWater() {
   mesh.renderOrder = 1;
   mesh.userData.tick = (time) => { uniforms.uTime.value = time; };
   return mesh;
+}
+
+/**
+ * The creek — stylised water again, but as a *ribbon* rather than a discarded
+ * plane.
+ *
+ * A pond can be a rectangle with everything outside its outline thrown away.
+ * A creek cannot: it winds, so a plane big enough to contain it would be
+ * mostly waste, and the outline is a path rather than a closed curve. Building
+ * the geometry along the polyline instead means the mesh *is* the creek, with
+ * no discard at all.
+ *
+ * The fragment shader is shared with the pond. All it needs is `vField` — 0 at
+ * the centre of the water, 1 at the bank — which the ribbon gets from its
+ * across-strip coordinate instead of from a radial distance.
+ */
+export function createCreek() {
+  const pts = CREEK.pts;
+  const SUB = 6;                  // subdivisions per source segment
+  const rows = [];
+
+  // Resample the polyline so the ribbon bends smoothly and has enough
+  // vertices along its length for the wave displacement to read.
+  for (let i = 0; i < pts.length - 1; i++) {
+    for (let k = 0; k < SUB; k++) rows.push(sampleCreek(i + k / SUB));
+  }
+  rows.push(sampleCreek(pts.length - 1.0001));
+
+  const count = rows.length;
+  const positions = new Float32Array(count * 2 * 3);
+  const cross = new Float32Array(count * 2);
+  const indices = new Uint32Array((count - 1) * 6);
+
+  for (let i = 0; i < count; i++) {
+    const r = rows[i];
+    // Widen slightly at the ends so the creek runs off into the trees rather
+    // than stopping dead at a visible squared-off tip.
+    const w = CREEK.w * (1 + 0.10 * Math.sin((i / (count - 1)) * Math.PI));
+    positions[i * 6 + 0] = r.x - r.nx * w;
+    positions[i * 6 + 1] = CREEK.y;
+    positions[i * 6 + 2] = r.z - r.nz * w;
+    positions[i * 6 + 3] = r.x + r.nx * w;
+    positions[i * 6 + 4] = CREEK.y;
+    positions[i * 6 + 5] = r.z + r.nz * w;
+    cross[i * 2] = -1;
+    cross[i * 2 + 1] = 1;
+  }
+  for (let i = 0, t = 0; i < count - 1; i++) {
+    const a = i * 2, b = a + 1, c = a + 2, d = a + 3;
+    indices[t++] = a; indices[t++] = c; indices[t++] = b;
+    indices[t++] = b; indices[t++] = c; indices[t++] = d;
+  }
+
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+  geo.setAttribute('aCross', new THREE.BufferAttribute(cross, 1));
+  geo.setIndex(new THREE.BufferAttribute(indices, 1));
+  geo.computeVertexNormals();
+
+  const uniforms = waterUniforms();
+  const mat = new THREE.MeshBasicMaterial({ transparent: true });
+  mat.onBeforeCompile = (shader) => {
+    Object.assign(shader.uniforms, uniforms);
+    shader.vertexShader = shader.vertexShader
+      .replace('#include <common>', `#include <common>
+        uniform float uTime;
+        attribute float aCross;
+        varying vec2 vLocal;
+        varying float vField;`)
+      .replace('#include <begin_vertex>', `#include <begin_vertex>
+        vLocal = vec2(position.x, position.z);
+        vField = abs(aCross);
+        transformed.y +=
+          0.09 * sin(position.x * 0.20 + uTime * 0.75) +
+          0.06 * sin(position.z * 0.24 - uTime * 0.55);`);
+    shader.fragmentShader = waterFragment(shader.fragmentShader);
+  };
+
+  const mesh = new THREE.Mesh(geo, mat);
+  mesh.renderOrder = 1;
+  mesh.userData.tick = (time) => { uniforms.uTime.value = time; };
+  return mesh;
+}
+
+/** Position and unit normal at a fractional index along the creek polyline. */
+function sampleCreek(f) {
+  const pts = CREEK.pts;
+  const i = Math.min(pts.length - 2, Math.floor(f));
+  const t = f - i;
+  const a = pts[i], b = pts[i + 1];
+  const x = a.x + (b.x - a.x) * t;
+  const z = a.z + (b.z - a.z) * t;
+  const dx = b.x - a.x, dz = b.z - a.z;
+  const len = Math.hypot(dx, dz) || 1;
+  // Left-hand normal to the direction of flow.
+  return { x, z, nx: -dz / len, nz: dx / len };
 }

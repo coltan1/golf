@@ -41,6 +41,7 @@ export let HOLE_LENGTH = 0;
 export let WATER_Y = -999;
 export let BUNKERS = [];
 export let POND = null;
+export let CREEK = null;   // { pts:[{x,z}], w: half-width, y: waterline }
 export let MOUNDS = [];
 export let CART_PATH = { offset: 40, halfWidth: 3.4, zFrom: -20, zTo: -400 };
 
@@ -119,6 +120,18 @@ export function setHole(def) {
       // Enough to give the bank a bay or two rather than a drawn oval.
       h: outline(def.n * 6151 + 29, 0.19, 0.12, 0.07),
     };
+  }
+
+  CREEK = null;
+  if (def.creek) {
+    const pts = def.creek.points.map(([at, off]) => resolve(at, off));
+    // One waterline for the whole run. A creek that followed the ground would
+    // need a flowing surface and a graded bed; a single level reads fine at
+    // this scale and keeps the ribbon flat, which is what lets the stylised
+    // water shader work unchanged.
+    let lo = Infinity;
+    for (const p of pts) lo = Math.min(lo, swell(p.x, p.z));
+    CREEK = { pts, w: def.creek.width, y: lo - 0.9 };
   }
 
   MOUNDS = (def.mounds ?? []).map((m) => {
@@ -305,6 +318,37 @@ export function pondField(x, z) { return POND ? shapeField(x, z, POND) : Infinit
 export function greenField(x, z) { return shapeField(x, z, GREEN); }
 
 /**
+ * Normalised distance to the creek — 1.0 is the bank.
+ *
+ * A creek is a path, not an outline, so this is distance to a polyline rather
+ * than a radial field. Same convention as the closed shapes, which is what
+ * lets surface classification, the sculpt and the texture treat both the same.
+ */
+export function creekField(x, z) {
+  if (!CREEK) return Infinity;
+  const p = CREEK.pts;
+  let best = Infinity;
+  for (let i = 0; i < p.length - 1; i++) {
+    const ax = p[i].x, az = p[i].z;
+    const dx = p[i + 1].x - ax, dz = p[i + 1].z - az;
+    const l2 = dx * dx + dz * dz;
+    let t = l2 > 0 ? ((x - ax) * dx + (z - az) * dz) / l2 : 0;
+    t = t < 0 ? 0 : t > 1 ? 1 : t;
+    const qx = x - (ax + dx * t), qz = z - (az + dz * t);
+    const d2 = qx * qx + qz * qz;
+    if (d2 < best) best = d2;
+  }
+  return Math.sqrt(best) / CREEK.w;
+}
+
+/** The waterline governing a point, or -999 where there is no water. */
+export function waterLevelAt(x, z) {
+  if (CREEK && creekField(x, z) < 1.35) return CREEK.y;
+  if (POND && pondField(x, z) < 1.35) return WATER_Y;
+  return -999;
+}
+
+/**
  * Signed yards inside the nearest bunker — positive on the sand. The fairway
  * and green get their edges sharpened per-pixel; without this the sand does
  * not, and a bunker smears into a pale stain the moment you stand near one.
@@ -331,7 +375,7 @@ export function distToHole(x, z) { return Math.hypot(x - HOLE_POS.x, z - HOLE_PO
  * Priority: water > bunker > green > fairway > rough.
  */
 export function surfaceAt(x, z) {
-  if (pondField(x, z) < 1) return 'water';
+  if (pondField(x, z) < 1 || creekField(x, z) < 1) return 'water';
   if (bunkerField(x, z) < 1) return 'sand';
   if (greenField(x, z) < 1) return 'green';
   const n = nearest(x, z);
@@ -422,6 +466,16 @@ export function heightAt(x, z) {
     }
   }
 
+  // Creek channel: a cut trough with soft banks, carved along the polyline.
+  if (CREEK) {
+    const cf = creekField(x, z);
+    if (cf < 1.9) {
+      const bed = 1 - smoothstep(0.0, 1.05, cf);
+      h = lerp(h, CREEK.y - 1.5, bed);
+      h -= 0.45 * smoothstep(1.55, 1.05, cf) * (1 - bed);
+    }
+  }
+
   // Pond basin, always safely below the waterline.
   if (POND) {
     const pf = pondField(x, z);
@@ -471,7 +525,9 @@ export function heightAt(x, z) {
  */
 export function surfaceHeightAt(x, z) {
   const h = heightAt(x, z);
-  return POND && pondField(x, z) < 1 ? Math.max(h, WATER_Y) : h;
+  if (CREEK && creekField(x, z) < 1) return Math.max(h, CREEK.y);
+  if (POND && pondField(x, z) < 1) return Math.max(h, WATER_Y);
+  return h;
 }
 
 /** Central-difference surface gradient — used for putt break and roll. */
@@ -598,6 +654,17 @@ export function makeCourseTexture(size = 1024) {
         mix(C.sandDark, C.sand, 1 - smoothstep(0.35, 0.95, bf), tmp);
         tmp[0] += (mott - 0.5) * 6; tmp[1] += (mott - 0.5) * 5; tmp[2] += (mott - 0.5) * 4;
         mix(col, tmp, m, col);
+      }
+
+      // --- creek: shoreline, then the dark bed under the ribbon ---
+      if (CREEK) {
+        const cf = creekField(x, z);
+        if (cf < 1.5) {
+          const shore = (1 - smoothstep(1.05, 1.4, cf)) * smoothstep(0.9, 1.08, cf);
+          mix(col, C.waterEdge, shore * 0.55, col);
+          const bed = 1 - smoothstep(0.92, 1.02, cf);
+          mix(col, C.water, bed, col);
+        }
       }
 
       // --- pond: shoreline, then the dark bed under the water plane ---
