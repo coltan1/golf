@@ -16,7 +16,7 @@ import * as THREE from 'three';
 import {
   WORLD_SIZE, WORLD_CX, WORLD_CZ, WATER_Y, POND, CREEK, MOW_PERIOD, CART_PATH,
   SURFACE_COLORS, heightAt, makeCourseTexture, nearest, fairwayHalfWidth, greenEdge,
-  bunkerEdge,
+  bunkerEdge, BUNKERS,
 } from './course.js';
 import { smoothstep } from './util.js';
 
@@ -192,6 +192,26 @@ export function createTerrain(renderer, toonRamp) {
     shader.uniforms.uGreen  = { value: colorUniform(SURFACE_COLORS.greenA) };
     shader.uniforms.uSand   = { value: colorUniform(SURFACE_COLORS.sand) };
 
+    // Bunker outlines go to the shader as parameters rather than as an
+    // interpolated vertex attribute. The field is radial and nonlinear, so
+    // interpolating it across 2.4-yard triangles turns the edge into a
+    // polygon — visibly so on a bunker only a few triangles wide. Evaluated
+    // per-pixel it is exactly the curve course.js sculpted.
+    const MAX = 8;
+    const A = [], B = [], HA = [], HP = [];
+    for (let i = 0; i < MAX; i++) {
+      const b = BUNKERS[i];
+      A.push(b ? new THREE.Vector4(b.x, b.z, b.rx, b.rz) : new THREE.Vector4(0, 0, 1, 1));
+      B.push(b ? new THREE.Vector4(b.rot, (b.rx + b.rz) * 0.5, 0, 0) : new THREE.Vector4(0, 1, 0, 0));
+      HA.push(b ? new THREE.Vector3(b.h[0], b.h[2], b.h[4]) : new THREE.Vector3());
+      HP.push(b ? new THREE.Vector3(b.h[1], b.h[3], b.h[5]) : new THREE.Vector3());
+    }
+    shader.uniforms.uBunkA = { value: A };
+    shader.uniforms.uBunkB = { value: B };
+    shader.uniforms.uBunkHA = { value: HA };
+    shader.uniforms.uBunkHP = { value: HP };
+    shader.uniforms.uBunkN = { value: Math.min(MAX, BUNKERS.length) };
+
     shader.vertexShader = shader.vertexShader
       .replace('#include <common>', `#include <common>
         attribute vec4 aCourse;
@@ -205,6 +225,39 @@ export function createTerrain(renderer, toonRamp) {
       .replace('#include <common>', `#include <common>
         varying vec4 vCourse;
         varying vec2 vWorld;
+        // Set during map_fragment, read again after lighting.
+        float ccSandM;
+
+        uniform vec4 uBunkA[8];    // centre.xy, radii.zw
+        uniform vec4 uBunkB[8];    // rotation, mean radius
+        uniform vec3 uBunkHA[8];   // outline harmonic amplitudes
+        uniform vec3 uBunkHP[8];   // outline harmonic phases
+        uniform int  uBunkN;
+
+        /** Signed yards inside the nearest bunker. Mirrors shapeField(). */
+        float ccBunkerEdge(vec2 p) {
+          float best = -999.0;
+          for (int i = 0; i < 8; i++) {
+            if (i >= uBunkN) break;
+            vec4 A = uBunkA[i];
+            vec4 B = uBunkB[i];
+            float c = cos(B.x), sn = sin(B.x);
+            vec2 d = p - A.xy;
+            vec2 e = vec2((d.x * c + d.y * sn) / A.z, (-d.x * sn + d.y * c) / A.w);
+            float r = length(e);
+            if (r > 2.2) continue;
+            float k = 1.0;
+            if (r > 0.001) {
+              float a = atan(e.y, e.x);
+              vec3 ha = uBunkHA[i], hp = uBunkHP[i];
+              k = 1.0 + ha.x * sin(a * 2.0 + hp.x)
+                      + ha.y * sin(a * 3.0 + hp.y)
+                      + ha.z * sin(a * 5.0 + hp.z);
+            }
+            best = max(best, (1.0 - r / k) * B.y);
+          }
+          return best;
+        }
         uniform vec3 uRough;
         uniform vec3 uSand;
         uniform vec3 uFairA;
@@ -235,6 +288,20 @@ export function createTerrain(renderer, toonRamp) {
           float k = d / w;
           return exp(-k * k) * (1.0 - smoothstep(1.2, 3.5, fp));
         }`)
+      .replace('#include <opaque_fragment>', `
+        {
+          // Sand shades far too hard for what it is. A bunker wall turns
+          // enough to drop a whole cel band, so the hollow reads as a dark
+          // crescent — but sand is a bright diffuse surface that bounces a
+          // great deal of light around inside its own bowl, and barely
+          // shades at all in life. So compress its range toward a flat lit
+          // value: the shaded face lifts, the lit face eases down a little,
+          // and the bunker reads as a bright scoop instead of a hole full of
+          // shadow. Grass is untouched.
+          vec3 flatSand = uSand * 0.72;
+          outgoingLight = mix(outgoingLight, mix(outgoingLight, flatSand, 0.62), ccSandM);
+        }
+        #include <opaque_fragment>`)
       .replace('#include <map_fragment>', `#include <map_fragment>
         {
           // Signed yards inside each mown surface, sharpened per-pixel. Doing
@@ -245,6 +312,16 @@ export function createTerrain(renderer, toonRamp) {
           float fairM  = smoothstep(-fwidth(fe), fwidth(fe), fe);
           float greenM = smoothstep(-fwidth(ge), fwidth(ge), ge);
           float offGreen = 1.0 - greenM;
+
+          // Sand is resolved first even though it is composited last. A bunker
+          // that straddles a mowing line sits under the fairway/green colour
+          // overrides below, and those would otherwise paint grass across the
+          // sand wherever that line crosses it — green streaks inside the
+          // bunker, repaired only within a yard of the bunker's own edge.
+          float be = ccBunkerEdge(vWorld);
+          float sandM = smoothstep(-fwidth(be), fwidth(be), be);
+          ccSandM = sandM;
+          float offSand = 1.0 - sandM;
 
           // --- cart path ---------------------------------------------------
           float pd = abs(vCourse.x + ${CART_PATH.offset.toFixed(1)});
@@ -278,24 +355,22 @@ export function createTerrain(renderer, toonRamp) {
 
           float nearF = 1.0 - smoothstep(0.30, 1.10, abs(fe));
           diffuseColor.rgb = mix(diffuseColor.rgb, mix(uRough, fairCol, fairM),
-                                 nearF * 0.92 * offGreen * (1.0 - pathM));
+                                 nearF * 0.92 * offGreen * offSand * (1.0 - pathM));
 
           float nearG = 1.0 - smoothstep(0.28, 1.00, abs(ge));
           diffuseColor.rgb = mix(diffuseColor.rgb, mix(uCollar, uGreen, greenM),
-                                 nearG * 0.92 * (1.0 - pathM));
+                                 nearG * 0.92 * offSand * (1.0 - pathM));
 
-          // Sand last, so it wins wherever a bunker meets anything. Without
-          // this the bake's single-texel edge magnifies into a pale smear and
-          // the bunker stops looking like a bunker at all.
-          float be = vCourse.w;
-          float sandM = smoothstep(-fwidth(be), fwidth(be), be);
+          // Sand composited last, so it wins wherever a bunker meets anything.
+          // Without this the bake's single-texel edge magnifies into a pale
+          // smear and the bunker stops looking like a bunker at all.
           float nearB = 1.0 - smoothstep(0.30, 1.10, abs(be));
           diffuseColor.rgb = mix(diffuseColor.rgb,
                                  mix(mix(uRough, fairCol, fairM), uSand, sandM),
                                  nearB * 0.94);
           // A darker rim just inside the sand: bunkers are dug, and the lip
           // shades the near edge.
-          diffuseColor.rgb *= 1.0 - 0.14 * ccSeam(be, 0.34);
+          diffuseColor.rgb *= 1.0 - 0.07 * ccSeam(be, 0.34);
 
           // --- mowing grooves ----------------------------------------------
           float footprint = fwidth(vCourse.x);
@@ -394,6 +469,20 @@ function waterFragment(src) {
         uniform vec3 uFoam;
         varying vec2 vLocal;
         varying float vField;`)
+      .replace('#include <opaque_fragment>', `
+        {
+          // Sand shades far too hard for what it is. A bunker wall turns
+          // enough to drop a whole cel band, so the hollow reads as a dark
+          // crescent — but sand is a bright diffuse surface that bounces a
+          // great deal of light around inside its own bowl, and barely
+          // shades at all in life. So compress its range toward a flat lit
+          // value: the shaded face lifts, the lit face eases down a little,
+          // and the bunker reads as a bright scoop instead of a hole full of
+          // shadow. Grass is untouched.
+          vec3 flatSand = uSand * 0.72;
+          outgoingLight = mix(outgoingLight, mix(outgoingLight, flatSand, 0.62), ccSandM);
+        }
+        #include <opaque_fragment>`)
       .replace('#include <map_fragment>', `#include <map_fragment>
         // Outside the ellipse there is no pond — cut it rather than letting
         // the plane's corners float over the grass.

@@ -460,9 +460,13 @@ export function heightAt(x, z) {
     const f = shapeField(x, z, BUNKERS[i]);
     if (f < 1.55) {
       const bowl = 1 - smoothstep(0.55, 1.0, f);
-      const lip = smoothstep(0.94, 1.14, f) * (1 - smoothstep(1.14, 1.55, f));
+      // Only a whisper of a lip. At any real height its outer face turns far
+      // enough to drop a cel band, and that rings the bunker with a hard dark
+      // crescent on the grass outside it — an artefact worth far more than
+      // the detail is worth. Spread this thin, the slope stays under a degree.
+      const lip = smoothstep(0.92, 1.22, f) * (1 - smoothstep(1.22, 1.90, f));
       h -= 2.3 * bowl;
-      h += 0.70 * lip;
+      h += 0.20 * lip;
     }
   }
 
