@@ -12,6 +12,7 @@ import { mulberry32, lerp, hash3, clamp } from './util.js';
 import {
   heightAt, nearest, centreXAt, fairwayHalfWidth, bunkerField, pondField,
   GREEN, HOLE_POS, TEE, WORLD_CX, WORLD_CZ, WORLD_SIZE,
+  greenEdge, bunkerEdge, cartPathAt,
 } from './course.js';
 
 // ---------------------------------------------------------------- geometry
@@ -341,6 +342,127 @@ export function createTrees(toonRamp) {
     group.add(mesh);
   }
 
+  return group;
+}
+
+// ---------------------------------------------------------------- grass
+/**
+ * A tuft of three tapered blades, built by hand.
+ *
+ * Six triangles. That is the whole budget per tuft, because there are tens of
+ * thousands of them — the effect comes from density, not from any one tuft
+ * being detailed. Each blade is a quad tapering to a point and bent slightly
+ * downrange, and the material is double-sided so a tuft reads from any angle
+ * without needing back faces in the geometry.
+ */
+function makeTuftGeo() {
+  const pos = [];
+  const BLADES = 3;
+  for (let b = 0; b < BLADES; b++) {
+    const a = (b / BLADES) * Math.PI * 2 + 0.4;
+    const dx = Math.cos(a), dz = Math.sin(a);
+    const w = 0.075;                    // half-width at the base
+    const lean = 0.34 + b * 0.06;       // how far the tip flops over
+    const h = 1.0 - b * 0.14;
+
+    // Base corners, perpendicular to the blade's own direction.
+    const px = -dz * w, pz = dx * w;
+    const b0 = [px, 0, pz];
+    const b1 = [-px, 0, -pz];
+    // A mid point so the blade can bend, and a tip.
+    const m0 = [dx * lean * 0.45 + px * 0.55, h * 0.55, dz * lean * 0.45 + pz * 0.55];
+    const m1 = [dx * lean * 0.45 - px * 0.55, h * 0.55, dz * lean * 0.45 - pz * 0.55];
+    const tip = [dx * lean, h, dz * lean];
+
+    pos.push(...b0, ...b1, ...m1);
+    pos.push(...b0, ...m1, ...m0);
+    pos.push(...m0, ...m1, ...tip);
+  }
+
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  geo.computeVertexNormals();
+  return geo;
+}
+
+/**
+ * Grass tufts through the rough.
+ *
+ * Scattered across the band either side of the corridor where the player
+ * actually walks, and skipped anywhere the ground is mown, sand, water or
+ * concrete. Density falls off with distance from the fairway: near the second
+ * cut is where tufts are read against short grass and do the most work, and
+ * further out the treeline takes over anyway.
+ */
+export function createGrass(toonRamp) {
+  const group = new THREE.Group();
+  group.name = 'grass';
+  const rnd = mulberry32(60421);
+
+  const zNear = TEE.z + 14;
+  const zFar = WORLD_CZ - WORLD_SIZE * 0.30;
+  const tufts = [];
+
+  for (let i = 0; i < 26000; i++) {
+    const z = lerp(zNear, zFar, rnd());
+    const side = rnd() < 0.5 ? 1 : -1;
+    // Biased inward: most tufts sit just off the short grass.
+    const off = lerp(0, 52, Math.pow(rnd(), 1.7));
+    const n0 = nearest(centreXAt(z), z);
+    const x = centreXAt(z) + side * (fairwayHalfWidth(n0.t) + 1.5 + off);
+
+    const n = nearest(x, z);
+    // Only in the rough proper: not on mown grass, and not in a hazard.
+    if (n.dist < fairwayHalfWidth(n.t) + 0.8) continue;
+    if (greenEdge(x, z) > -1.5) continue;
+    if (bunkerEdge(x, z) > -1.0) continue;
+    if (pondField(x, z) < 1.15) continue;
+    if (cartPathAt(x, z, n) > 0.02) continue;
+
+    const y = heightAt(x, z);
+    if (y < -0.5) continue;
+
+    tufts.push({
+      x, y: y - 0.05, z,
+      s: lerp(0.30, 0.52, rnd()),
+      sy: lerp(0.8, 1.35, rnd()),
+      rot: rnd() * Math.PI * 2,
+      v: rnd(),
+    });
+  }
+
+  const mesh = new THREE.InstancedMesh(
+    makeTuftGeo(),
+    new THREE.MeshToonMaterial({
+      color: 0xffffff, gradientMap: toonRamp, side: THREE.DoubleSide,
+    }),
+    Math.max(1, tufts.length)
+  );
+
+  const m = new THREE.Matrix4();
+  const q = new THREE.Quaternion();
+  const e = new THREE.Euler();
+  const p = new THREE.Vector3();
+  const sc = new THREE.Vector3();
+  const col = new THREE.Color();
+
+  tufts.forEach((t, i) => {
+    e.set(0, t.rot, 0);
+    m.compose(p.set(t.x, t.y, t.z), q.setFromEuler(e), sc.set(t.s, t.s * t.sy, t.s));
+    mesh.setMatrixAt(i, m);
+    // A shade deeper and yellower than the turf under them, so a tuft reads as
+    // a blade catching light rather than as speckle on the ground.
+    col.setHSL(lerp(0.21, 0.27, t.v), lerp(0.42, 0.58, t.v), lerp(0.34, 0.46, t.v));
+    mesh.setColorAt(i, col);
+  });
+
+  mesh.instanceMatrix.needsUpdate = true;
+  if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
+  // Deliberately not shadow casters: tens of thousands of tiny casters costs a
+  // great deal and buys almost nothing at this size.
+  mesh.castShadow = false;
+  mesh.frustumCulled = false;
+  group.add(mesh);
   return group;
 }
 

@@ -15,7 +15,7 @@ import {
 } from './course.js';
 import { createTerrain, createWater, makeToonRamp, makeGroundRamp } from './terrain.js';
 import { createSky, createLights, createClouds, createBackdrop, FOG_COLOR } from './scenery.js';
-import { createTrees, createClubhouse, createFlag, createTeeMarkers } from './props.js';
+import { createTrees, createGrass, createClubhouse, createFlag, createTeeMarkers } from './props.js';
 import { Golfer } from './golfer.js';
 import { Ball, CLUBS, pickClub } from './ball.js';
 import { SwipeSwing } from './input.js';
@@ -94,6 +94,7 @@ function buildWorld() {
   water = POND ? add(createWater()) : null;
 
   add(createTrees(ramp));
+  add(createGrass(ramp));
   clubhouse = add(createClubhouse(ramp));
   add(createTeeMarkers(ramp));
 
@@ -454,9 +455,9 @@ function frame() {
   }
   const focusY = heightAt(focusX, focusZ);
   lights.sun.target.position.set(focusX, focusY, focusZ);
-  // ~45° from the left: shadows fall right and toward the camera, roughly as
-  // long as their caster. Must match createLights() — see the note there.
-  lights.sun.position.set(focusX - 135, focusY + 146, focusZ - 55);
+  // ~38° from the left: shadows fall right and toward the camera, about a
+  // third longer than their caster. Must match createLights().
+  lights.sun.position.set(focusX - 135, focusY + 114, focusZ - 55);
   lights.sun.target.updateMatrixWorld();
 
   if (freeCam.active) {

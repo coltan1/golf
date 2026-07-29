@@ -53,6 +53,7 @@ const pTZ = new Float32Array(N);
 const pS = new Float32Array(N);
 
 let widthProfile = [22, 20, 18, 17];
+let elevProfile = [0, 0, 0, 0];
 let GREEN_BASE = 0;
 
 // ---------------------------------------------------------------- setup
@@ -69,6 +70,7 @@ export function setHole(def) {
   HOLE = def;
   PAR = def.par;
   widthProfile = def.width;
+  elevProfile = def.elev ?? [0, 0, 0, 0];
 
   const pts = def.path.map(([x, z]) => new Vector3(x, 0, z));
   const curve = new CatmullRomCurve3(pts, false, 'catmullrom', 0.5);
@@ -212,6 +214,22 @@ export function nearest(x, z, out = _n) {
 }
 
 /**
+ * Height of the hole's own landform at `t`, in yards relative to the tee.
+ *
+ * This is the biggest single thing separating a real course from a flat field.
+ * A hole that climbs plays long and hides its green; one that plunges opens
+ * the whole thing out in front of you. It is applied before anything else, so
+ * greens, bunkers, mounding and water all sit on top of it.
+ */
+export function elevationAt(t) {
+  const e = elevProfile;
+  const f = clamp(t, 0, 1) * (e.length - 1);
+  const i = Math.floor(f);
+  const j = Math.min(e.length - 1, i + 1);
+  return lerp(e[i], e[j], f - i);
+}
+
+/**
  * Fairway half-width in yards. The profile sets the broad shape; the two sine
  * terms give the mown line an organic wander so it isn't a ruler-straight
  * ribbon down the hole. Periods work out around 270 and 120 yards.
@@ -292,8 +310,20 @@ function rolling(x, z) {
     5.2 * Math.sin((x + z * 0.6) * 0.0043 + 1.9)
   );
 }
-function swell(x, z) {
-  return 2.4 * fbm2(x * 0.0058 + 0.3, z * 0.0047 - 0.8) + 2.0 * Math.sin((x * 0.4 + z) * 0.0039 + 0.7);
+// Its own scratch result. `nearest()` hands back a shared object, and
+// heightAt() is holding that object across its whole body — if swell() called
+// nearest() bare it would clobber the caller's `n` halfway down, silently
+// corrupting every distance read after it.
+const _swellN = { dist: 0, side: 0, perp: 0, t: 0, s: 0, i: 0 };
+
+function swell(x, z, t) {
+  // Includes the landform, because this is what the green pad and the
+  // waterline are levelled against — without it a green on an uphill hole
+  // would be cut into a pit.
+  const tt = t !== undefined ? t : nearest(x, z, _swellN).t;
+  return 2.4 * fbm2(x * 0.0058 + 0.3, z * 0.0047 - 0.8) +
+         2.0 * Math.sin((x * 0.4 + z) * 0.0039 + 0.7) +
+         elevationAt(tt);
 }
 
 /**
@@ -305,11 +335,12 @@ export function heightAt(x, z) {
   const n = nearest(x, z);
   const hw = fairwayHalfWidth(n.t);
 
-  let h = rolling(x, z);
+  // The hole's landform first: everything else is built on top of it.
+  let h = rolling(x, z) + elevationAt(n.t);
 
   // Ease the terrain toward the calmer `swell` inside and around the corridor.
   const mown = 1 - smoothstep(hw * 0.9, hw * 3.0, n.dist);
-  h = lerp(h, swell(x, z), mown * 0.88);
+  h = lerp(h, swell(x, z, n.t), mown * 0.88);
 
   // Putting surface: a near-flat pad on a defined shoulder. The blend is
   // deliberately tight — a green is built up as a pad, and that shoulder is a
@@ -413,6 +444,7 @@ export function gradientAt(x, z, out = { gx: 0, gz: 0 }) {
 export const SURFACE_COLORS = {
   rough:    [0x7e, 0xba, 0x64],
   roughAlt: [0x6c, 0xa9, 0x52],
+  roughMean:[0x79, 0xb4, 0x5d], // what the shader blends to at a cut line
   roughDry: [0x9c, 0xc0, 0x66],
   roughWet: [0x54, 0x92, 0x46],
   deep:     [0x5e, 0x98, 0x4a],

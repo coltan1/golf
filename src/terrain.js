@@ -92,11 +92,15 @@ function colorUniform(rgb) {
  * band and keeps its shape. The terminator stays hard, so it is still cel.
  */
 export function makeGroundRamp() {
+  // The top band reaches down to dotNL 0.5 (60° off the light). Open turf
+  // under a 38° sun sits at 0.62, comfortably inside it, so undulation never
+  // tips the fairway into a darker step — while bunker faces and mounding,
+  // which turn much further, still drop one and keep their shape.
   const steps = [
-    0.20, 0.20, 0.20, 0.20, 0.20, 0.20, 0.20, 0.20, // facing away
-    0.46, 0.46, 0.46,                               // steep, turned away
-    0.72, 0.72,                                     // moderately tilted
-    1.00, 1.00, 1.00,                               // anything roughly sunward
+    0.22, 0.22, 0.22, 0.22, 0.22, 0.22, 0.22, 0.22, // facing away
+    0.44, 0.44,                                     // steep, turned away
+    0.70, 0.70,                                     // moderately tilted
+    1.00, 1.00, 1.00, 1.00,                         // anything roughly sunward
   ];
   const cv = document.createElement('canvas');
   cv.width = steps.length; cv.height = 1;
@@ -181,7 +185,7 @@ export function createTerrain(renderer, toonRamp) {
   // grooves, turf grain and cart-path detail — all drawn per-pixel and
   // antialiased against the pixel footprint so nothing shimmers as it recedes.
   mat.onBeforeCompile = (shader) => {
-    shader.uniforms.uRough  = { value: colorUniform(SURFACE_COLORS.roughAlt) };
+    shader.uniforms.uRough  = { value: colorUniform(SURFACE_COLORS.roughMean) };
     shader.uniforms.uFairA  = { value: colorUniform(SURFACE_COLORS.fairA) };
     shader.uniforms.uFairB  = { value: colorUniform(SURFACE_COLORS.fairB) };
     shader.uniforms.uCollar = { value: colorUniform(SURFACE_COLORS.collar) };
@@ -258,19 +262,25 @@ export function createTerrain(renderer, toonRamp) {
 
           // --- hard surface boundaries -------------------------------------
           // The bake can only resolve an edge to a texel or so, and a texel is
-          // most of a yard. Within a couple of yards of a cut line we discard
-          // its blur and rebuild the colour from the two pure surfaces using
-          // the per-pixel mask, which is what makes the edge genuinely hard
-          // instead of merely tight.
+          // most of a yard, so right at a cut line we discard its blur and
+          // rebuild the colour from the two pure surfaces using the per-pixel
+          // mask.
+          //
+          // The band this happens over has to be *narrow*. The pure colours
+          // are flat, while the baked rough is mottled with dry and wet
+          // patches — override too wide a strip and you get a band of flat
+          // colour running alongside every fairway, meeting textured rough
+          // beyond it. That halo reads worse than the soft edge it replaced.
+          // A yard is enough to harden the edge and too thin to see as a band.
           float period = ${MOW_PERIOD.toFixed(2)};  // yards between passes
           float stripe = smoothstep(-0.6, 0.6, sin(vCourse.x * (6.2831853 / period)));
           vec3 fairCol = mix(uFairA, uFairB, stripe);
 
-          float nearF = 1.0 - smoothstep(0.6, 2.6, abs(fe));
+          float nearF = 1.0 - smoothstep(0.30, 1.10, abs(fe));
           diffuseColor.rgb = mix(diffuseColor.rgb, mix(uRough, fairCol, fairM),
                                  nearF * 0.92 * offGreen * (1.0 - pathM));
 
-          float nearG = 1.0 - smoothstep(0.5, 2.2, abs(ge));
+          float nearG = 1.0 - smoothstep(0.28, 1.00, abs(ge));
           diffuseColor.rgb = mix(diffuseColor.rgb, mix(uCollar, uGreen, greenM),
                                  nearG * 0.92 * (1.0 - pathM));
 
@@ -279,7 +289,7 @@ export function createTerrain(renderer, toonRamp) {
           // the bunker stops looking like a bunker at all.
           float be = vCourse.w;
           float sandM = smoothstep(-fwidth(be), fwidth(be), be);
-          float nearB = 1.0 - smoothstep(0.5, 2.2, abs(be));
+          float nearB = 1.0 - smoothstep(0.30, 1.10, abs(be));
           diffuseColor.rgb = mix(diffuseColor.rgb,
                                  mix(mix(uRough, fairCol, fairM), uSand, sandM),
                                  nearB * 0.94);

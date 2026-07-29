@@ -12,6 +12,7 @@
  *
  *   at    yards along the centreline from the tee
  *   off   yards left (-) or right (+) of the centreline at that point
+ *   elev  height in yards relative to the tee, sampled evenly tee to green
  *
  * course.js resolves them to world positions once the centreline is built.
  */
@@ -27,6 +28,7 @@ export const HOLES = [
     // Uphill, bending right; a bunker eats the right side of the drive zone.
     path: [[0, 6], [0, -110], [2, -230], [22, -330], [48, -420], [60, -468]],
     width: W_NORMAL,
+    elev: [0, 3, 6, 9],
     green: { at: 442, off: 2, r: 15 },
     bunkers: [
       { at: 300, off: 26, rx: 15, rz: 8, rot: 0.1 },
@@ -40,6 +42,7 @@ export const HOLES = [
     // Long, downhill, swinging left. Reachable, with sand guarding both sides.
     path: [[0, 6], [-2, -120], [-6, -250], [-46, -370], [-92, -480], [-114, -558]],
     width: W_WIDE,
+    elev: [0, -11, -19, -15],
     green: { at: 572, off: 0, r: 16 },
     bunkers: [
       { at: 290, off: -28, rx: 16, rz: 9, rot: -0.2 },
@@ -54,6 +57,7 @@ export const HOLES = [
     // Short and drivable, defended by a cluster of sand up the left.
     path: [[0, 6], [-2, -80], [-6, -160], [-40, -240], [-72, -310], [-86, -350]],
     width: W_TIGHT,
+    elev: [0, 2, 4, 5],
     green: { at: 348, off: 0, r: 14 },
     bunkers: [
       { at: 210, off: -24, rx: 13, rz: 7.5, rot: -0.15 },
@@ -67,6 +71,7 @@ export const HOLES = [
     // A brutally long one-shotter to a green pinched by two bunkers.
     path: [[0, 6], [-2, -80], [-4, -170], [-5, -265]],
     width: W_NORMAL,
+    elev: [0, -2, -4, -6],
     green: { at: 238, off: 0, r: 15 },
     bunkers: [
       { at: 222, off: -18, rx: 12, rz: 7, rot: -0.3 },
@@ -79,6 +84,7 @@ export const HOLES = [
     // Uphill dogleg left over two deep fairway bunkers.
     path: [[0, 6], [-4, -120], [-10, -240], [-54, -350], [-100, -455], [-120, -520]],
     width: W_TIGHT,
+    elev: [0, 3, 7, 11],
     green: { at: 492, off: 0, r: 15 },
     bunkers: [
       { at: 280, off: -26, rx: 16, rz: 9, rot: -0.25 },
@@ -92,6 +98,7 @@ export const HOLES = [
     // Steeply downhill to a green shelved above a single bunker.
     path: [[0, 6], [4, -70], [8, -140], [10, -215]],
     width: W_NORMAL,
+    elev: [0, -4, -8, -12],
     green: { at: 178, off: 0, r: 15 },
     bunkers: [{ at: 164, off: -17, rx: 12, rz: 7, rot: -0.35 }],
     mounds: [{ at: 196, off: 22, r: 20, h: 3.2 }],
@@ -101,6 +108,7 @@ export const HOLES = [
     // A narrow chute of pines to a small green ringed with sand.
     path: [[0, 6], [2, -110], [6, -230], [24, -340], [44, -440], [54, -492]],
     width: [19, 17, 16, 15],
+    elev: [0, 2, 5, 7],
     green: { at: 448, off: 0, r: 14 },
     bunkers: [
       { at: 432, off: -19, rx: 10, rz: 6, rot: -0.3 },
@@ -115,6 +123,7 @@ export const HOLES = [
     // Uphill and right, its green guarded by mounding rather than bunkers.
     path: [[0, 6], [4, -120], [10, -250], [58, -365], [106, -470], [128, -545]],
     width: W_WIDE,
+    elev: [0, 5, 10, 15],
     green: { at: 568, off: 0, r: 16 },
     bunkers: [{ at: 300, off: 27, rx: 17, rz: 9, rot: 0.2 }],
     mounds: [
@@ -128,6 +137,7 @@ export const HOLES = [
     // Downhill off the tee, then sharply back up to a green that repels.
     path: [[0, 6], [-2, -110], [-8, -230], [-48, -335], [-88, -430], [-106, -488]],
     width: W_NORMAL,
+    elev: [0, -9, -7, 4],
     green: { at: 458, off: 0, r: 15 },
     bunkers: [
       { at: 300, off: -26, rx: 14, rz: 8, rot: -0.2 },
@@ -140,6 +150,7 @@ export const HOLES = [
     // A long, plunging dogleg left; one big bunker short-left of the green.
     path: [[0, 6], [-6, -110], [-16, -230], [-78, -330], [-140, -425], [-170, -482]],
     width: W_WIDE,
+    elev: [0, -11, -22, -28],
     green: { at: 492, off: 0, r: 15 },
     bunkers: [{ at: 470, off: -22, rx: 15, rz: 8.5, rot: -0.3 }],
     mounds: [{ at: 516, off: 26, r: 24, h: 3.8 }],
@@ -150,6 +161,7 @@ export const HOLES = [
     // green that gives you all the room in the world to bail out right.
     path: [[0, 6], [-4, -120], [-12, -250], [-54, -365], [-96, -470], [-118, -540]],
     width: W_NORMAL,
+    elev: [0, -6, -11, -14],
     green: { at: 518, off: 0, r: 15 },
     bunkers: [{ at: 536, off: 20, rx: 11, rz: 7, rot: 0.25 }],
     water: { at: 512, off: -30, rx: 22, rz: 17 },
@@ -161,6 +173,7 @@ export const HOLES = [
     // shallow green set on the diagonal, sand front and back.
     path: [[0, 6], [2, -60], [4, -120], [5, -180]],
     width: W_NORMAL,
+    elev: [0, -2, -3, -4],
     green: { at: 154, off: 0, r: 13, squash: 0.55, angle: 0.38 },
     bunkers: [
       { at: 138, off: 0, rx: 13, rz: 5.5, rot: 0.38 },
@@ -176,6 +189,7 @@ export const HOLES = [
     // the green. The whole hole is a decision about how much you'll risk.
     path: [[0, 6], [-6, -110], [-18, -230], [-100, -330], [-186, -422], [-238, -474]],
     width: W_WIDE,
+    elev: [0, -3, -5, -7],
     green: { at: 542, off: 0, r: 16 },
     bunkers: [
       { at: 566, off: -18, rx: 10, rz: 6, rot: -0.2 },
@@ -190,6 +204,7 @@ export const HOLES = [
     // Not a grain of sand anywhere on it. All the defence is in the ground.
     path: [[0, 6], [-4, -110], [-10, -230], [-46, -325], [-84, -412], [-100, -460]],
     width: W_WIDE,
+    elev: [0, 2, 5, 8],
     green: { at: 438, off: 0, r: 16 },
     bunkers: [],
     mounds: [
@@ -203,6 +218,7 @@ export const HOLES = [
     // Reachable in two, over a pond that sits right against the front edge.
     path: [[0, 6], [-2, -120], [-6, -250], [-30, -370], [-56, -488], [-70, -556]],
     width: W_WIDE,
+    elev: [0, -3, -6, -8],
     green: { at: 548, off: 0, r: 15 },
     bunkers: [{ at: 566, off: 20, rx: 10, rz: 6.5, rot: 0.3 }],
     water: { at: 520, off: 0, rx: 26, rz: 11, rot: 0.05 },
@@ -214,6 +230,7 @@ export const HOLES = [
     // the hole, which is why you see so many aces here.
     path: [[0, 6], [-2, -60], [-4, -125], [-5, -195]],
     width: W_NORMAL,
+    elev: [0, -2, -4, -6],
     green: { at: 168, off: 0, r: 15 },
     bunkers: [
       { at: 156, off: 18, rx: 10, rz: 6, rot: 0.3 },
@@ -227,6 +244,7 @@ export const HOLES = [
     // Uphill, tight off the tee, to a shallow green that falls away behind.
     path: [[0, 6], [2, -110], [8, -230], [36, -328], [64, -415], [78, -468]],
     width: W_TIGHT,
+    elev: [0, 3, 6, 9],
     green: { at: 438, off: 0, r: 14 },
     bunkers: [
       { at: 424, off: -18, rx: 11, rz: 6.5, rot: -0.3 },
@@ -240,6 +258,7 @@ export const HOLES = [
     // two bunkers cut into the left of the drive zone.
     path: [[0, 6], [2, -110], [8, -230], [58, -328], [108, -415], [130, -470]],
     width: [18, 17, 19, 18],
+    elev: [0, 6, 13, 20],
     green: { at: 462, off: 0, r: 15 },
     bunkers: [
       { at: 292, off: -24, rx: 14, rz: 8, rot: -0.25 },

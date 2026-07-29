@@ -60,16 +60,16 @@ export function createLights(scene) {
   // 0.78 band → (1.26 + 1.60·0.78)/π ≈ 0.80 of albedo, which is bright
   // without clipping; the deepest band works out near 0.48, so the steps
   // stay clearly separated instead of collapsing into the tone curve.
-  const hemi = new THREE.HemisphereLight(0xcfe6ff, 0x8fc776, 1.26);
+  const hemi = new THREE.HemisphereLight(0xbfdcff, 0x93c97e, 1.14);
   scene.add(hemi);
 
-  // ~45° elevation. Lower than this and flat ground never climbs out of a mid
-  // band, which drags the whole course dark; much higher and the long shadows
-  // that give the reference its shape disappear. 45° puts open ground in the
-  // second band from the top, so rolls that tilt sunward pop to full and
-  // rolls that tilt away drop a step — broad, deliberate banding on the turf.
-  const sun = new THREE.DirectionalLight(0xfff8e8, 1.60);
-  sun.position.set(-135, 146, -55);
+  // ~38° elevation — late afternoon. Long shadows are most of what makes
+  // low light beautiful, and the ground ramp's top band is wide enough to
+  // hold open turf at this angle without it dropping a step (see below).
+  // The key is warm and the fill is cool, so lit and shadowed ground differ
+  // in hue as well as value rather than just being two brightnesses.
+  const sun = new THREE.DirectionalLight(0xfff0cf, 1.78);
+  sun.position.set(-135, 114, -55);
   sun.castShadow = true;
   sun.shadow.mapSize.set(2048, 2048);
   sun.shadow.camera.near = 20;
