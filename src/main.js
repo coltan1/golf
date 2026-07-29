@@ -159,11 +159,18 @@ const game = {
   total: 0,     // strokes relative to par across the round
 };
 
-/** Point the player down the hole: at the pin if reachable, else at the dogleg. */
-function defaultAim(x, z) {
+/**
+ * Point the player down the hole: at the pin if it's in range, otherwise at
+ * the spot on the centreline this club can actually reach.
+ *
+ * `reach` matters on a dogleg. Aiming a fixed distance down the line fires
+ * straight through the corner and into the trees; aiming at where the ball
+ * will finish keeps it on the short grass.
+ */
+function defaultAim(x, z, reach) {
   const d = distToHole(x, z);
   let tx = HOLE_POS.x, tz = HOLE_POS.z;
-  if (d > 235) { const p = aimPointAhead(x, z, 225); tx = p.x; tz = p.z; }
+  if (d > reach) { const p = aimPointAhead(x, z, reach); tx = p.x; tz = p.z; }
   return Math.atan2(tx - x, -(tz - z));
 }
 
@@ -173,7 +180,9 @@ function refreshShot({ pop = false, keepAim = false } = {}) {
   const toPin = distToHole(x, z);
   // Where a straight shot of a given carry would finish, so the caddie can
   // decline to club us into a hazard.
-  const aimNow = keepAim ? game.aim : defaultAim(x, z);
+  // Two passes: a provisional aim to judge the hazards by, then a final aim
+  // once we know which club — the club decides how far down the dogleg to look.
+  const aimNow = keepAim ? game.aim : defaultAim(x, z, 225);
   const landsWet = (carry, roll) => {
     // Sweep the whole landing-and-run-out band, not just the pitch mark.
     const runout = carry * 0.16 * roll;
@@ -183,7 +192,13 @@ function refreshShot({ pop = false, keepAim = false } = {}) {
     return false;
   };
   game.club = pickClub(toPin, game.lie, game.onTee, landsWet);
-  if (!keepAim) game.aim = defaultAim(x, z);
+  // The putter has no carry, so asking where it "reaches" would aim at the
+  // centreline beside the ball instead of at the hole. On the green, always
+  // aim at the hole.
+  if (!keepAim) {
+    const reach = game.club === CLUBS.putter ? Infinity : game.club.carry * 0.97;
+    game.aim = defaultAim(x, z, reach);
+  }
 
   golfer.forceIdle();
   golfer.place(x, heightAt(x, z), z, game.aim, pop);

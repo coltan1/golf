@@ -180,13 +180,17 @@ export function aimPointAhead(x, z, dist) {
 
 /**
  * Nearest point on the centreline. Seeded by a binary search on Z, then
- * scanned outward — the window has to be generous because where the hole runs
- * diagonally the perpendicular closest point sits well up or down the path
- * from the sample with the matching Z.
+ * scanned outward.
+ *
+ * The window has to be generous. Where the hole runs diagonally the
+ * perpendicular closest point sits well up or down the path from the sample
+ * with the matching Z — roughly `dist × tan(turn)` yards away, which on a 40°
+ * dogleg is most of a hundred yards out in the trees. Too narrow a window and
+ * the fairway silently bulges at every corner.
  */
 export function nearest(x, z, out = _n) {
   const i0 = indexForZ(z);
-  const lo = Math.max(0, i0 - 26), hi = Math.min(N - 1, i0 + 26);
+  const lo = Math.max(0, i0 - 90), hi = Math.min(N - 1, i0 + 90);
 
   let best = i0, bestD2 = Infinity;
   for (let i = lo; i <= hi; i++) {
