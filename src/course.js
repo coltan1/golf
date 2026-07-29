@@ -452,20 +452,32 @@ export function heightAt(x, z) {
     }
   }
 
-  // Bunkers are dug, not dished. A flat sand floor out to about half the
-  // radius, then a steep face up to the lip — a smooth saucer reads as a pale
-  // patch painted on the grass rather than as a hazard you have to climb out
-  // of. The wall lands across two or three quads, which the mesh can hold.
+  // Bunkers are dug, not dished: a flat sand floor, then a face up to the rim.
+  //
+  // The face is kept well inside the sand — done climbing by about 0.72 of the
+  // radius — so there is a band of flat sand between the top of the wall and
+  // the grass. Without it the rim vertices average their normals between the
+  // steep wall and the flat turf, that tilt drops a cel band, and every bunker
+  // wears a dark polygonal ring on the grass around it.
+  let sandMask = 0;
   for (let i = 0; i < BUNKERS.length; i++) {
     const f = shapeField(x, z, BUNKERS[i]);
-    if (f < 1.55) {
-      const bowl = 1 - smoothstep(0.55, 1.0, f);
+    // Wide on purpose. This mask fades the rough's relief out over the
+    // bunker, and that relief is 1.5 yards tall — fade it over a couple of
+    // yards and the fade itself becomes a thirty-degree slope ringing the
+    // bunker, which drops a cel band and puts back the dark halo it was
+    // meant to remove. Spread across ~15 yards the ramp stays under six
+    // degrees, and the graded apron it leaves is what surrounds a real
+    // bunker anyway.
+    sandMask = Math.max(sandMask, 1 - smoothstep(0.90, 2.10, f));
+    if (f < 1.90) {
+      const bowl = 1 - smoothstep(0.25, 0.72, f);
       // Only a whisper of a lip. At any real height its outer face turns far
       // enough to drop a cel band, and that rings the bunker with a hard dark
       // crescent on the grass outside it — an artefact worth far more than
       // the detail is worth. Spread this thin, the slope stays under a degree.
       const lip = smoothstep(0.92, 1.22, f) * (1 - smoothstep(1.22, 1.90, f));
-      h -= 2.3 * bowl;
+      h -= 2.0 * bowl;
       h += 0.20 * lip;
     }
   }
@@ -498,7 +510,11 @@ export function heightAt(x, z) {
     smoothstep(-1.2, 0.8, ge)
   );
   const path = cartPathAt(x, z, n);
-  const unmown = (1 - mownTight) * (1 - path);
+  // Sand is not long grass. Letting the rough's relief and its grass-height
+  // lift run through a bunker makes the sand lumpy, and those bumps tilt
+  // normals far enough to drop cel bands — which is most of the mottled dark
+  // patching that shows up in and around bunkers cut into the rough.
+  const unmown = (1 - mownTight) * (1 - path) * (1 - sandMask);
   // Rolling relief in the rough only. Mown ground stays smooth: a cel ramp
   // turns every gentle undulation into a wandering band edge, and on a fairway
   // that reads as a shading fault rather than as ground.
