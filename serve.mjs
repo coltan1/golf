@@ -12,7 +12,7 @@
  */
 
 import { createServer } from 'node:http';
-import { readFile, stat } from 'node:fs/promises';
+import { mkdir, readFile, stat, writeFile } from 'node:fs/promises';
 import { extname, join, normalize, sep } from 'node:path';
 
 const ROOT = process.cwd();
@@ -31,11 +31,34 @@ const TYPES = {
   '.ico': 'image/x-icon',
 };
 
+// Where POST /shot drops frames. Outside the served tree on purpose: these are
+// scratch images, not part of the game.
+const SHOTS = process.env.GOLF_SHOTS ?? join(ROOT, '.shots');
+
 createServer(async (req, res) => {
   try {
     const url = new URL(req.url, 'http://localhost');
     let path = decodeURIComponent(url.pathname);
     if (path.endsWith('/')) path += 'index.html';
+
+    // POST /shot?name=foo — save a frame the page rendered.
+    //
+    // The browser can render the game perfectly well in a background tab when
+    // driven by hand, but there is no way to *see* the result from outside the
+    // page. Writing it to disk turns a screenshot into an ordinary file, which
+    // anything can open. Local dev server only; it writes one flat filename
+    // into one directory and accepts nothing else.
+    if (req.method === 'POST' && path === '/shot') {
+      const chunks = [];
+      for await (const c of req) chunks.push(c);
+      const raw = Buffer.concat(chunks).toString('utf8');
+      const b64 = raw.slice(raw.indexOf(',') + 1);
+      const name = (url.searchParams.get('name') ?? 'shot').replace(/[^\w.-]/g, '');
+      await mkdir(SHOTS, { recursive: true });
+      await writeFile(join(SHOTS, `${name}.jpg`), Buffer.from(b64, 'base64'));
+      res.writeHead(200, { 'Content-Type': 'text/plain' }).end(join(SHOTS, `${name}.jpg`));
+      return;
+    }
 
     const full = normalize(join(ROOT, path));
     // Refuse anything that escapes the served directory.

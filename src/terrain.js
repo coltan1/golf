@@ -25,8 +25,8 @@ import { smoothstep } from './util.js';
  *
  * three.js samples this at `dotNL * 0.5 + 0.5`, so texel 0 is fully
  * facing-away and texel 15 is straight at the light. Half the ramp is
- * therefore spent on the unlit hemisphere; the four lit bands are spaced so
- * they come out roughly even in *angle* rather than even in dot product,
+ * therefore spent on the unlit hemisphere; the lit bands above it are spaced
+ * so they come out roughly even in *angle* rather than even in dot product,
  * which is what makes them read as deliberate bands on a curved surface
  * instead of a thin rind around the terminator.
  *
@@ -35,12 +35,21 @@ import { smoothstep } from './util.js';
  * light, coloured shadows at the same time.
  */
 export function makeToonRamp() {
+  // Toon lighting looks up this ramp at `0.5 + 0.5 * dotNL`, not at dotNL —
+  // so a face square-on to the sun lands at texel 12, not 15. Putting the
+  // highlight only in texel 15 therefore lights nothing that is actually flat:
+  // a bridge deck or a cabin roof came out at 0.56 while the turf beside it sat
+  // at 1.00, so every horizontal surface read as though it were in shade, cool
+  // and grey because only the blue fill was reaching it.
+  //
+  // The top band starts at texel 12 for the same reason it does in the ground
+  // ramp — dotNL 0.5 — so the two agree about what "lit" means. The three
+  // bands below it still give rounded things like tree crowns their gradation.
   const steps = [
     0.15, 0.15, 0.15, 0.15, 0.15, 0.15, 0.15, 0.15, // facing away
-    0.36, 0.36, 0.36,                               // terminator
-    0.56, 0.56,                                     // mid
-    0.78, 0.78,                                     // light
-    1.00,                                           // highlight
+    0.38, 0.38,                                     // terminator
+    0.66, 0.66,                                     // mid
+    1.00, 1.00, 1.00, 1.00,                         // anything roughly sunward
   ];
   const cv = document.createElement('canvas');
   cv.width = steps.length; cv.height = 1;
@@ -96,10 +105,16 @@ export function makeGroundRamp() {
   // under a 38° sun sits at 0.62, comfortably inside it, so undulation never
   // tips the fairway into a darker step — while bunker faces and mounding,
   // which turn much further, still drop one and keep their shape.
+  // Texels 12-15 must all hold 1.0: open turf under a 38° sun lands on texel
+  // 12, and anything less than full there darkens the entire course. What can
+  // be tuned is the size of the *first* step down. At 1.00 → 0.70 any slope
+  // that just crosses the boundary announces itself with a 30% drop; at 0.82
+  // the same slope is far less conspicuous, while genuinely steep ground still
+  // reaches the darker bands below it.
   const steps = [
-    0.22, 0.22, 0.22, 0.22, 0.22, 0.22, 0.22, 0.22, // facing away
-    0.44, 0.44,                                     // steep, turned away
-    0.70, 0.70,                                     // moderately tilted
+    0.28, 0.28, 0.28, 0.28, 0.28, 0.28, 0.28, 0.28, // facing away
+    0.55, 0.55,                                     // steep, turned away
+    0.82, 0.82,                                     // moderately tilted
     1.00, 1.00, 1.00, 1.00,                         // anything roughly sunward
   ];
   const cv = document.createElement('canvas');
@@ -290,16 +305,27 @@ export function createTerrain(renderer, toonRamp) {
         }`)
       .replace('#include <opaque_fragment>', `
         {
-          // Sand shades far too hard for what it is. A bunker wall turns
-          // enough to drop a whole cel band, so the hollow reads as a dark
-          // crescent — but sand is a bright diffuse surface that bounces a
-          // great deal of light around inside its own bowl, and barely
-          // shades at all in life. So compress its range toward a flat lit
-          // value: the shaded face lifts, the lit face eases down a little,
-          // and the bunker reads as a bright scoop instead of a hole full of
-          // shadow. Grass is untouched.
-          vec3 flatSand = uSand * 0.72;
-          outgoingLight = mix(outgoingLight, mix(outgoingLight, flatSand, 0.62), ccSandM);
+          // Sand shades far too hard for what it is.
+          //
+          // A bunker wall turns enough to drop a cel band, and the bowl spans
+          // only a couple of triangles, so that band lands as a hard, straight
+          // edged wedge lying across the sand — the "dark spot in the bunker".
+          // Softening the ramp does not fix it, because the ramp is doing
+          // exactly what it is meant to; the sand simply should not be on it.
+          //
+          // So sand opts out. It is re-lit from a smooth Lambert term over a
+          // deliberately narrow range: bright, bouncing light around inside
+          // its own hollow, shading just enough to read as a scoop rather than
+          // a sticker. Bands cannot appear in something that never touches the
+          // ramp. Enough of the original survives that shadows thrown across a
+          // bunker still register, without the hollow going dark on its own.
+          #if NUM_DIR_LIGHTS > 0
+            float sNdL = dot(normalize(normal), normalize(directionalLights[0].direction));
+            float sSoft = mix(0.86, 1.05, smoothstep(-0.25, 0.90, sNdL));
+          #else
+            float sSoft = 1.0;
+          #endif
+          outgoingLight = mix(outgoingLight, uSand * 0.72 * sSoft, ccSandM * 0.82);
         }
         #include <opaque_fragment>`)
       .replace('#include <map_fragment>', `#include <map_fragment>
@@ -408,6 +434,7 @@ export function createTerrain(renderer, toonRamp) {
           // Warm the bright side and cool the dark side — variation in hue as
           // well as value is what stops it looking like noise on flat paint.
           diffuseColor.rgb *= vec3(1.0 + grain * 1.30, 1.0 + grain, 1.0 + grain * 0.70);
+
         }`);
   };
 
@@ -441,7 +468,10 @@ function waterUniforms() {
     uTime: { value: 0 },
     uDeep: { value: new THREE.Color(0x1c6b86) },
     uShallow: { value: new THREE.Color(0x63cbd8) },
-    uCrest: { value: new THREE.Color(0xd6f4fa) },
+    // Pale blue, not near-white. Crests are mixed in at a third or so over
+    // a dark teal, and against that a near-white reads as a painted stripe
+    // rather than as light catching a ripple.
+    uCrest: { value: new THREE.Color(0x9fdcea) },
     uFoam: { value: new THREE.Color(0xffffff) },
   };
 }
@@ -468,21 +498,21 @@ function waterFragment(src) {
         uniform vec3 uCrest;
         uniform vec3 uFoam;
         varying vec2 vLocal;
-        varying float vField;`)
-      .replace('#include <opaque_fragment>', `
-        {
-          // Sand shades far too hard for what it is. A bunker wall turns
-          // enough to drop a whole cel band, so the hollow reads as a dark
-          // crescent — but sand is a bright diffuse surface that bounces a
-          // great deal of light around inside its own bowl, and barely
-          // shades at all in life. So compress its range toward a flat lit
-          // value: the shaded face lifts, the lit face eases down a little,
-          // and the bunker reads as a bright scoop instead of a hole full of
-          // shadow. Grass is untouched.
-          vec3 flatSand = uSand * 0.72;
-          outgoingLight = mix(outgoingLight, mix(outgoingLight, flatSand, 0.62), ccSandM);
+        varying float vField;
+
+        float cwHash(vec2 p) {
+          p = fract(p * vec2(127.31, 311.7));
+          p += dot(p, p + 34.23);
+          return fract(p.x * p.y);
         }
-        #include <opaque_fragment>`)
+        float cwNoise(vec2 p) {
+          vec2 i = floor(p), f = fract(p);
+          f = f * f * (3.0 - 2.0 * f);
+          return mix(
+            mix(cwHash(i),                  cwHash(i + vec2(1.0, 0.0)), f.x),
+            mix(cwHash(i + vec2(0.0, 1.0)), cwHash(i + vec2(1.0, 1.0)), f.x),
+            f.y);
+        }`)
       .replace('#include <map_fragment>', `#include <map_fragment>
         // Outside the ellipse there is no pond — cut it rather than letting
         // the plane's corners float over the grass.
@@ -491,16 +521,29 @@ function waterFragment(src) {
         float depth = 1.0 - smoothstep(0.0, 1.0, vField);
         vec3 water = mix(uShallow, uDeep, depth);
 
-        // Crests: two slow waves summed, then thresholded. The hard edge is
-        // the whole point — soft highlights would read as specular, these
-        // read as drawn shapes.
-        float wave = sin(vLocal.x *  0.22 + vLocal.y * 0.10 + uTime * 0.90) * 0.6
-                   + sin(vLocal.x * -0.13 + vLocal.y * 0.27 - uTime * 0.60) * 0.4;
-        water = mix(water, uCrest, smoothstep(0.50, 0.58, wave) * 0.50);
+        // Crests, thresholded hard. The hard edge is the whole point — soft
+        // highlights would read as specular, these read as drawn shapes.
+        //
+        // Driven by warped noise rather than summed sines. Sines were the
+        // obvious thing and they were wrong: any small number of them, on a
+        // pond only a few wavelengths across, thresholds into evenly spaced
+        // parallel stripes with rows of identical dots between them. It read
+        // as wallpaper. Noise has no preferred direction and no period, so the
+        // crests come out as scattered patches that never repeat, and warping
+        // the lookup by a little more noise keeps their outlines from looking
+        // like contour lines.
+        float fp = fwidth(vLocal.x) + fwidth(vLocal.y);
+        float waa = 1.0 - smoothstep(1.6, 3.4, fp);
+        vec2 q = vLocal * 0.16 + vec2(uTime * 0.06, uTime * -0.04);
+        q += 0.55 * vec2(cwNoise(q * 1.7 + 3.1), cwNoise(q * 1.7 + 8.4)) - 0.275;
+        water = mix(water, uCrest, smoothstep(0.60, 0.69, cwNoise(q)) * 0.34 * waa);
 
-        // A finer, faster set so the surface never looks frozen.
-        float sparkle = sin(vLocal.x * 0.55 - vLocal.y * 0.42 + uTime * 1.60);
-        water = mix(water, uCrest, smoothstep(0.84, 0.90, sparkle) * 0.42);
+        // A finer, faster set so the surface never looks frozen. Faded out on
+        // its own footprint: it is small enough to alias into a crawling moiré
+        // once a pixel covers more than a yard of pond.
+        float saa = 1.0 - smoothstep(0.55, 1.20, fp);
+        vec2 q2 = vLocal * 0.52 + vec2(uTime * -0.11, uTime * 0.08);
+        water = mix(water, uCrest, smoothstep(0.74, 0.83, cwNoise(q2)) * 0.24 * saa);
 
         // Foam hugging the shore, its width wobbling around the perimeter so
         // the ring never looks like a stroked ellipse. The epsilon keeps atan

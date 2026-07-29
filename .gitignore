@@ -11,3 +11,6 @@ package-lock.json
 Thumbs.db
 desktop.ini
 *.log
+
+# Frames written by POST /shot during visual debugging.
+.shots/

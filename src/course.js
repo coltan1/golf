@@ -434,7 +434,10 @@ export function heightAt(x, z) {
   // deliberately tight — a green is built up as a pad, and that shoulder is a
   // big part of why a green reads as a green rather than as mown fairway.
   const ge = greenEdge(x, z);
-  const gb = smoothstep(-3.0, 1.0, ge);
+  // Blended wide. The pad sits about a yard above its surroundings, and
+  // over a four-yard shoulder that is a fourteen-degree slope, which drops
+  // a cel band and rings the green with a dark collar.
+  const gb = smoothstep(-9.0, 1.0, ge);
   if (gb > 0) {
     // A gentle crown for putt break, plus a whisper of tier.
     const crown = 0.55 * clamp(ge / GREEN.r, 0, 1) +
@@ -488,7 +491,7 @@ export function heightAt(x, z) {
     if (cf < 1.9) {
       const bed = 1 - smoothstep(0.0, 1.05, cf);
       h = lerp(h, CREEK.y - 1.5, bed);
-      h -= 0.45 * smoothstep(1.55, 1.05, cf) * (1 - bed);
+      h -= 0.22 * smoothstep(2.40, 1.05, cf) * (1 - bed);
     }
   }
 
@@ -505,9 +508,20 @@ export function heightAt(x, z) {
   // Rough is genuinely lumpy — real relief so it catches the toon ramp's bands
   // and shades itself. One long octave only: fbm2's top harmonic is 6x its
   // base, so anything shorter facets on the terrain grid.
+  // Two masks, because the two things they gate differ tenfold in height.
+  //
+  // `tight` gates the grass-height lip at a mowing line — a third of a yard,
+  // which can fade over a few yards and stay shallow. `wide` gates the rough's
+  // relief, which is a yard and a half: fade that over the same few yards and
+  // the fade is a thirty-degree wall along the edge of every fairway. Spread
+  // over fifteen it stays under five degrees.
   const mownTight = Math.max(
-    1 - smoothstep(hw - 0.8, hw + 1.2, n.dist),
-    smoothstep(-1.2, 0.8, ge)
+    1 - smoothstep(hw - 2.0, hw + 3.0, n.dist),
+    smoothstep(-2.5, 1.0, ge)
+  );
+  const mownWide = Math.max(
+    1 - smoothstep(hw - 2.0, hw + 16.0, n.dist),
+    smoothstep(-16.0, 1.0, ge)
   );
   const path = cartPathAt(x, z, n);
   // Sand is not long grass. Letting the rough's relief and its grass-height
@@ -515,11 +529,12 @@ export function heightAt(x, z) {
   // normals far enough to drop cel bands — which is most of the mottled dark
   // patching that shows up in and around bunkers cut into the rough.
   const unmown = (1 - mownTight) * (1 - path) * (1 - sandMask);
+  const unmownWide = (1 - mownWide) * (1 - path) * (1 - sandMask);
   // Rolling relief in the rough only. Mown ground stays smooth: a cel ramp
   // turns every gentle undulation into a wandering band edge, and on a fairway
   // that reads as a shading fault rather than as ground.
-  if (unmown > 0.001) {
-    h += unmown * 1.5 * fbm2(x * 0.040 + 11.3, z * 0.038 - 7.1);
+  if (unmownWide > 0.001) {
+    h += unmownWide * 1.5 * fbm2(x * 0.040 + 11.3, z * 0.038 - 7.1);
   }
 
   // Grass height is real height. Rough is left long and the fairway and green
@@ -529,7 +544,9 @@ export function heightAt(x, z) {
   h += 0.34 * unmown;
 
   // The cart path is graded: sits just below the turf either side of it.
-  h -= 0.22 * path;
+  // Shallow: the path mask turns over less than a yard, so anything deeper
+  // than this grades steeply enough to draw a dark line down both kerbs.
+  h -= 0.10 * path;
 
   // A distant rim so the world never shows a cut edge against the sky.
   const rim = Math.max(0, n.dist - 150) * 0.11;

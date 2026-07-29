@@ -501,6 +501,40 @@ window.freecam = Object.assign(
       toggleFreeCam(true); freeCam.lookAt(x, y, z); return freeCam.status();
     },
     off: () => { toggleFreeCam(false); return 'freecam off'; },
+
+    /** Live handles on the render objects, for automated shading audits. */
+    dbg: () => ({ renderer, scene, camera, lights, terrain, game, THREE }),
+
+    /** Jump straight to a hole by number (1-18), skipping the scorecard. */
+    hole: (n) => {
+      if (!freeCam) return 'still loading';
+      hud.hideCard();
+      loadHole(n - 1);
+      return `hole ${HOLES[game.holeIndex].n} — ${HOLES[game.holeIndex].name}`;
+    },
+
+    /**
+     * Render right now and hand back a JPEG data URL.
+     *
+     * A background tab gets no animation frames at all, so the loop stalls and
+     * the canvas holds whatever it last drew — which makes it impossible to
+     * look at the game from a tool that can't put the page on screen. Driving
+     * `frame()` by hand sidesteps that entirely: it runs the normal update and
+     * render path, just on our clock instead of the compositor's.
+     *
+     * Two frames, because the freecam eases toward its target rather than
+     * snapping; one frame after a goto() still shows the camera in transit.
+     */
+    shot: (w = 560, q = 0.72) => {
+      if (!freeCam) return 'still loading';
+      frame(); frame();
+      const src = renderer.domElement;
+      const c = document.createElement('canvas');
+      c.width = w;
+      c.height = Math.round((w * src.height) / src.width);
+      c.getContext('2d').drawImage(src, 0, 0, c.width, c.height);
+      return c.toDataURL('image/jpeg', q);
+    },
   }
 );
 console.log(
@@ -516,11 +550,22 @@ function onResize() {
 }
 window.addEventListener('resize', onResize);
 
-// Build on the next frame so the loading screen actually paints first.
-requestAnimationFrame(() => {
+let booted = false;
+function boot() {
+  if (booted) return;
+  booted = true;
   initOnce();
   loadHole(0);
   hud.hideLoader();
-  clock.getDelta();
+  clock.getDelta();   // discard the long pause spent building
   frame();
-});
+}
+
+// Build on the next frame so the loading screen actually paints first.
+//
+// A tab that starts in the background is never given that frame, though —
+// browsers withhold animation frames from hidden pages entirely — so opening
+// the game in a new tab and switching to it later would leave it sitting on
+// the loader forever. The timer is the backstop; whichever fires first wins.
+requestAnimationFrame(boot);
+setTimeout(boot, 250);
