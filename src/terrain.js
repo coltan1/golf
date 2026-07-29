@@ -527,13 +527,17 @@ export function createTerrain(renderer, toonRamp, treeMap) {
 function waterUniforms() {
   return {
     uTime: { value: 0 },
-    uDeep: { value: new THREE.Color(0x1c6b86) },
-    uShallow: { value: new THREE.Color(0x63cbd8) },
+    // Deep and saturated. These were pale enough that a pond seen from the tee
+    // washed out into the turf and read as a light patch of ground rather than
+    // as water — which on a hole where the hazard is the whole point of the
+    // shot is the one thing it cannot do.
+    uDeep: { value: new THREE.Color(0x10556f) },
+    uShallow: { value: new THREE.Color(0x3ea3bd) },
     // Pale blue, not near-white. Crests are mixed in at a third or so over
     // a dark teal, and against that a near-white reads as a painted stripe
     // rather than as light catching a ripple.
     uCrest: { value: new THREE.Color(0x9fdcea) },
-    uFoam: { value: new THREE.Color(0xffffff) },
+    uFoam: { value: new THREE.Color(0xdff2f7) },
   };
 }
 
@@ -597,14 +601,14 @@ function waterFragment(src) {
         float waa = 1.0 - smoothstep(1.6, 3.4, fp);
         vec2 q = vLocal * 0.16 + vec2(uTime * 0.06, uTime * -0.04);
         q += 0.55 * vec2(cwNoise(q * 1.7 + 3.1), cwNoise(q * 1.7 + 8.4)) - 0.275;
-        water = mix(water, uCrest, smoothstep(0.60, 0.69, cwNoise(q)) * 0.34 * waa);
+        water = mix(water, uCrest, smoothstep(0.60, 0.69, cwNoise(q)) * 0.19 * waa);
 
         // A finer, faster set so the surface never looks frozen. Faded out on
         // its own footprint: it is small enough to alias into a crawling moiré
         // once a pixel covers more than a yard of pond.
         float saa = 1.0 - smoothstep(0.55, 1.20, fp);
         vec2 q2 = vLocal * 0.52 + vec2(uTime * -0.11, uTime * 0.08);
-        water = mix(water, uCrest, smoothstep(0.74, 0.83, cwNoise(q2)) * 0.24 * saa);
+        water = mix(water, uCrest, smoothstep(0.74, 0.83, cwNoise(q2)) * 0.13 * saa);
 
         // Foam hugging the shore, its width wobbling around the perimeter so
         // the ring never looks like a stroked ellipse. The epsilon keeps atan
@@ -612,11 +616,13 @@ function waterFragment(src) {
         float wobble = sin(atan(vLocal.y + 1e-4, vLocal.x + 1e-4) * 9.0 + uTime * 0.70) * 0.022;
         float foam = smoothstep(0.90 + wobble, 0.963 + wobble, vField)
                    * (1.0 - smoothstep(0.985, 1.0, vField));
-        water = mix(water, uFoam, foam);
+        water = mix(water, uFoam, foam * 0.62);
 
         diffuseColor.rgb = water;
         // Shallows are more see-through; foam is nearly solid.
-        diffuseColor.a = max(mix(0.74, 0.93, depth), foam * 0.95);`);
+        // Nearly opaque. Water this shallow in alpha let the bed's colour
+        // dominate at any distance, and the bed is painted to look like a bed.
+        diffuseColor.a = max(mix(0.88, 0.98, depth), foam * 0.95);`);
 }
 
 export function createWater() {

@@ -573,8 +573,8 @@ export const SURFACE_COLORS = {
   // little warmth in the damp rim stops it going blue in the fill light.
   sand:     [0xfb, 0xfa, 0xf6],
   sandDark: [0xe8, 0xe4, 0xd8],
-  water:    [0x3f, 0x8d, 0xa6],
-  waterEdge:[0x92, 0xd6, 0xdd],
+  water:    [0x27, 0x6c, 0x87],
+  waterEdge:[0x6b, 0xb2, 0xc6],
   // Pine straw. Warm red-brown, and darker than it looks in photographs —
   // it sits in tree shade nearly all day.
   straw:    [0x9d, 0x6b, 0x3e],
@@ -716,9 +716,21 @@ export function makeCourseTexture(size = 2048) {
       if (CREEK) {
         const cf = creekField(x, z);
         if (cf < 1.5) {
-          const shore = (1 - smoothstep(1.05, 1.4, cf)) * smoothstep(0.9, 1.08, cf);
-          mix(col, C.waterEdge, shore * 0.55, col);
-          const bed = 1 - smoothstep(0.92, 1.02, cf);
+          // Keyed to the waterline, not to the outline.
+          //
+          // The outline is the *maximum* extent of the water; the terrain
+          // decides how much of that actually holds any, and on these basins
+          // that is only about seventy percent. Painting a bed across the rest
+          // left a ring of blue ground lying outside the water with nothing on
+          // top of it — which reads as a moat, or as a shadow, or on a hole
+          // where the pond is distant, as the water itself. Deriving both the
+          // bed and its damp margin from the same height test the water plane
+          // is clipped by puts the painted edge exactly under the real one.
+          const g = heightAt(x, z);
+          const wy = CREEK.y;
+          const bed = 1 - smoothstep(wy - 0.10, wy + 0.45, g);
+          const damp = smoothstep(wy + 0.05, wy + 0.55, g) * (1 - smoothstep(wy + 0.55, wy + 1.7, g));
+          mix(col, C.waterEdge, damp * 0.35, col);
           mix(col, C.water, bed, col);
         }
       }
@@ -727,9 +739,12 @@ export function makeCourseTexture(size = 2048) {
       if (POND) {
         const pf = pondField(x, z);
         if (pf < 1.35) {
-          const shore = (1 - smoothstep(1.02, 1.3, pf)) * smoothstep(0.9, 1.05, pf);
-          mix(col, C.waterEdge, shore * 0.6, col);
-          const bed = 1 - smoothstep(0.94, 1.02, pf);
+          // Same as the creek above: the waterline decides, not the outline.
+          const g = heightAt(x, z);
+          const bed = 1 - smoothstep(WATER_Y - 0.10, WATER_Y + 0.45, g);
+          const damp = smoothstep(WATER_Y + 0.05, WATER_Y + 0.55, g)
+                     * (1 - smoothstep(WATER_Y + 0.55, WATER_Y + 1.7, g));
+          mix(col, C.waterEdge, damp * 0.35, col);
           mix(col, C.water, bed, col);
         }
       }
