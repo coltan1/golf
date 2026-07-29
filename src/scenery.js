@@ -159,9 +159,9 @@ export function createBackdrop(toonRamp) {
     // shadow band already multiplies these by ~0.48, and the far side of the
     // ring faces away from the sun, so a dark base colour turns the whole
     // horizon into a void when you're playing towards it.
-    { count: 18, ringR: 620,  top: [95, 165],  w: [200, 340], d: [130, 210], color: 0x3f7a52 },
-    { count: 22, ringR: 1000, top: [150, 250], w: [280, 460], d: [180, 290], color: 0x4a8271 },
-    { count: 26, ringR: 1500, top: [210, 330], w: [380, 620], d: [240, 380], color: 0x63909a },
+    { count: 18, ringR: 620,  top: [95, 165],  w: [200, 340], d: [130, 210], color: 0x35674a },
+    { count: 22, ringR: 1000, top: [150, 250], w: [280, 460], d: [180, 290], color: 0x407061 },
+    { count: 26, ringR: 1500, top: [210, 330], w: [380, 620], d: [240, 380], color: 0x577f89 },
   ];
 
   for (const L of LAYERS) {

@@ -83,6 +83,77 @@ function makePineGeo() {
   return geo;
 }
 
+// ------------------------------------------------------------ tree density
+/**
+ * A coverage map of where the trees actually are, rebuilt with each hole.
+ *
+ * Both the pine straw beds (in the terrain shader) and the grass tufts (on the
+ * CPU) key off this. They cannot derive it themselves — tree placement is
+ * rejection-sampled against half a dozen rules and then randomly thinned, so
+ * "somewhere a tree is allowed" and "somewhere a tree is" are very different
+ * regions, and straw spread over the first covers a lot of open rough.
+ */
+const TMAP = 256;
+let treeMap = null;            // Uint8Array, TMAP × TMAP
+let treeTex = null;            // the same data, for the terrain shader
+let treeOrigin = { x: 0, z: 0, size: 1 };
+
+function buildTreeMap(trunks, pines) {
+  // Hangs off a shader uniform rather than material.map, so disposeWorld()
+  // will not find it — it has to let go of the last hole's texture itself.
+  if (treeTex) treeTex.dispose();
+  const data = new Uint8Array(TMAP * TMAP);
+  const half = WORLD_SIZE / 2;
+  treeOrigin = { x: WORLD_CX - half, z: WORLD_CZ - half, size: WORLD_SIZE };
+  const perTexel = WORLD_SIZE / TMAP;
+
+  const splat = (x, z, yards) => {
+    const u = (x - treeOrigin.x) / perTexel;
+    const v = (z - treeOrigin.z) / perTexel;
+    const R = Math.max(1, Math.round(yards / perTexel));
+    const ci = Math.round(u), cj = Math.round(v);
+    for (let j = -R; j <= R; j++) {
+      const pz = cj + j;
+      if (pz < 0 || pz >= TMAP) continue;
+      for (let i = -R; i <= R; i++) {
+        const px = ci + i;
+        if (px < 0 || px >= TMAP) continue;
+        // Falls off to nothing at the edge of the kernel, so overlapping
+        // canopies accumulate into a continuous field rather than tiling.
+        const d2 = (i * i + j * j) / ((R + 0.5) * (R + 0.5));
+        if (d2 >= 1) continue;
+        const k = (1 - d2) * 150;
+        const idx = pz * TMAP + px;
+        data[idx] = Math.min(255, data[idx] + k);
+      }
+    }
+  };
+
+  for (const t of trunks) splat(t.x, t.z, 7);
+  for (const p of pines) splat(p.x, p.z, 6 + p.s * 2.2);
+
+  treeMap = data;
+  treeTex = new THREE.DataTexture(data, TMAP, TMAP, THREE.RedFormat);
+  treeTex.minFilter = treeTex.magFilter = THREE.LinearFilter;
+  treeTex.wrapS = treeTex.wrapT = THREE.ClampToEdgeWrapping;
+  treeTex.needsUpdate = true;
+}
+
+/** 0…1 tree coverage at a world point. Zero until createTrees has run. */
+export function treeDensityAt(x, z) {
+  if (!treeMap) return 0;
+  const u = ((x - treeOrigin.x) / treeOrigin.size) * TMAP;
+  const v = ((z - treeOrigin.z) / treeOrigin.size) * TMAP;
+  const i = Math.floor(u), j = Math.floor(v);
+  if (i < 0 || j < 0 || i >= TMAP || j >= TMAP) return 0;
+  return treeMap[j * TMAP + i] / 255;
+}
+
+/** The same map as a texture, plus the transform the shader needs. */
+export function treeMapTexture() {
+  return treeTex ? { tex: treeTex, origin: treeOrigin } : null;
+}
+
 // ---------------------------------------------------------------- trees
 /** Is this a legal, sensible spot for a tree? */
 function plantable(x, z) {
@@ -165,7 +236,7 @@ export function createTrees(toonRamp) {
         x, y: y + trunkH * 0.58, z,
         s: lerp(0.95, 1.35, rnd()) * k, sy: lerp(0.85, 1.15, rnd()),
         rot: rnd() * Math.PI * 2, lean: rnd(),
-        hsl: [lerp(0.30, 0.36, rnd()), lerp(0.34, 0.50, rnd()), lerp(0.16, 0.25, rnd())],
+        hsl: [lerp(0.30, 0.36, rnd()), lerp(0.34, 0.50, rnd()), lerp(0.13, 0.21, rnd())],
       });
       return;
     }
@@ -175,7 +246,7 @@ export function createTrees(toonRamp) {
         x, y: y - 0.2, z,
         s: lerp(1.7, 2.9, rnd()) * k, sy: lerp(0.9, 1.25, rnd()),
         rot: rnd() * Math.PI * 2, lean: rnd(),
-        hsl: [lerp(0.29, 0.37, rnd()), lerp(0.38, 0.54, rnd()), lerp(0.17, 0.29, rnd())],
+        hsl: [lerp(0.29, 0.37, rnd()), lerp(0.38, 0.54, rnd()), lerp(0.14, 0.24, rnd())],
       });
       return;
     }
@@ -185,11 +256,11 @@ export function createTrees(toonRamp) {
     const spec = {
       broadleaf: {
         h: [1.5, 2.3], lo: 2, hi: 3, sz: [1.9, 2.5], sq: 0.95,
-        hsl: () => [lerp(0.22, 0.31, rnd()), lerp(0.44, 0.62, rnd()), lerp(0.24, 0.37, rnd())],
+        hsl: () => [lerp(0.22, 0.31, rnd()), lerp(0.44, 0.62, rnd()), lerp(0.20, 0.31, rnd())],
       },
       young: {
         h: [0.7, 1.1], lo: 1, hi: 2, sz: [1.5, 2.0], sq: 1.05,
-        hsl: () => [lerp(0.24, 0.33, rnd()), lerp(0.48, 0.64, rnd()), lerp(0.29, 0.42, rnd())],
+        hsl: () => [lerp(0.24, 0.33, rnd()), lerp(0.48, 0.64, rnd()), lerp(0.24, 0.35, rnd())],
       },
       dogwood: {
         h: [0.9, 1.3], lo: 2, hi: 3, sz: [1.6, 2.2], sq: 0.62,
@@ -197,7 +268,7 @@ export function createTrees(toonRamp) {
       },
       maple: {
         h: [1.1, 1.6], lo: 2, hi: 3, sz: [1.7, 2.2], sq: 0.90,
-        hsl: () => [lerp(0.96, 1.0, rnd()), lerp(0.44, 0.60, rnd()), lerp(0.25, 0.36, rnd())],
+        hsl: () => [lerp(0.96, 1.0, rnd()), lerp(0.44, 0.60, rnd()), lerp(0.21, 0.30, rnd())],
       },
     }[kind];
 
@@ -297,6 +368,16 @@ export function createTrees(toonRamp) {
 
   const m = new THREE.Matrix4();
   const q = new THREE.Quaternion();
+  // ------------------------------------------------------ tree density map
+  // Where the trees actually ended up, at about three yards a texel.
+  //
+  // The pine straw beds and the grass both need to know this, and neither can
+  // work it out for itself: tree placement is rejection-sampled against half a
+  // dozen rules, so "far enough out that trees are allowed" is nothing like
+  // "trees are here". Splatting the real positions is the only honest answer,
+  // and it costs one small texture per hole.
+  buildTreeMap(trunks, pines);
+
   const e = new THREE.Euler();
   const pos = new THREE.Vector3();
   const scl = new THREE.Vector3();
@@ -403,11 +484,11 @@ export function createGrass(toonRamp) {
   const zFar = WORLD_CZ - WORLD_SIZE * 0.30;
   const tufts = [];
 
-  for (let i = 0; i < 44000; i++) {
+  for (let i = 0; i < 78000; i++) {
     const z = lerp(zNear, zFar, rnd());
     const side = rnd() < 0.5 ? 1 : -1;
     // Biased inward: most tufts sit just off the short grass.
-    const off = lerp(0, 52, Math.pow(rnd(), 1.7));
+    const off = lerp(0, 46, Math.pow(rnd(), 1.6));
     const n0 = nearest(centreXAt(z), z);
     const x = centreXAt(z) + side * (fairwayHalfWidth(n0.t) + 1.5 + off);
 
@@ -418,14 +499,12 @@ export function createGrass(toonRamp) {
     if (bunkerEdge(x, z) > -1.0) continue;
     if (pondField(x, z) < 1.15) continue;
 
-    // Stop before the pine straw. The beds begin about seven yards past the
-    // fairway edge and are solid by twenty-six, and green tufts standing in
-    // brown needles read as a mistake — the terrain shader draws that band, so
-    // this has to agree with it. Distance only, deliberately: matching the
-    // shader's noise from here is not possible and not worth it, and a few
-    // stragglers along the edge of a bed look like weeds, which is right.
-    const past = n.dist - fairwayHalfWidth(n.t);
-    if (past > lerp(7, 17, rnd())) continue;
+    // Give way to the pine straw. Under a canopy the ground is needles, not
+    // grass, and green tufts standing in brown needles read as a mistake — so
+    // this reads the same tree map the terrain shader draws the beds from,
+    // rather than guessing from distance. A few stragglers where the coverage
+    // is thin look like weeds at the edge of a bed, which is right.
+    if (treeDensityAt(x, z) > lerp(0.16, 0.42, rnd())) continue;
 
     const y = heightAt(x, z);
     if (y < -0.5) continue;
@@ -436,12 +515,12 @@ export function createGrass(toonRamp) {
     // The same field drives how many blades stand here and how big they are,
     // so a thick patch reads as thick from any distance.
     const zone = 0.5 + 0.5 * fbm2(x * 0.026 + 5.7, z * 0.026 - 2.3);
-    if (rnd() > 0.30 + 0.85 * zone) continue;
+    if (rnd() > 0.55 + 0.55 * zone) continue;
 
     tufts.push({
       x, y: y - 0.05, z,
-      s: lerp(0.30, 0.52, rnd()) * lerp(0.82, 1.40, zone),
-      sy: lerp(0.8, 1.35, rnd()) * lerp(0.88, 1.55, zone),
+      s: lerp(0.38, 0.62, rnd()) * lerp(0.90, 1.50, zone),
+      sy: lerp(1.0, 1.6, rnd()) * lerp(0.95, 1.65, zone),
       rot: rnd() * Math.PI * 2,
       v: rnd(),
       zone,
@@ -473,8 +552,8 @@ export function createGrass(toonRamp) {
     // soil, which is most of why coarse turf looks darker than fine turf.
     col.setHSL(
       lerp(0.21, 0.29, t.v),
-      lerp(0.42, 0.58, t.v),
-      lerp(0.34, 0.46, t.v) * lerp(1.06, 0.78, t.zone)
+      lerp(0.48, 0.64, t.v),
+      lerp(0.28, 0.39, t.v) * lerp(1.06, 0.78, t.zone)
     );
     mesh.setColorAt(i, col);
   });

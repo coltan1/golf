@@ -132,7 +132,7 @@ export function makeGroundRamp() {
   return tex;
 }
 
-export function createTerrain(renderer, toonRamp) {
+export function createTerrain(renderer, toonRamp, treeMap) {
   // ~2.4 yards per quad, whatever the hole's extent. Fine enough that no
   // triangle reads as a triangle, and that a bunker bowl gets eight or ten
   // quads across it instead of three.
@@ -208,6 +208,14 @@ export function createTerrain(renderer, toonRamp) {
     shader.uniforms.uSand   = { value: colorUniform(SURFACE_COLORS.sand) };
     shader.uniforms.uStraw  = { value: colorUniform(SURFACE_COLORS.straw) };
     shader.uniforms.uStrawB = { value: colorUniform(SURFACE_COLORS.strawAlt) };
+    // Where the trees actually stand, so the beds can sit under them.
+    shader.uniforms.uTreeMap = { value: treeMap ? treeMap.tex : null };
+    shader.uniforms.uTreeOrg = {
+      value: treeMap
+        ? new THREE.Vector3(treeMap.origin.x, treeMap.origin.z, treeMap.origin.size)
+        : new THREE.Vector3(0, 0, 1),
+    };
+    shader.uniforms.uHasTrees = { value: treeMap ? 1 : 0 };
 
     // Bunker outlines go to the shader as parameters rather than as an
     // interpolated vertex attribute. The field is radial and nonlinear, so
@@ -299,6 +307,9 @@ export function createTerrain(renderer, toonRamp) {
         uniform vec3 uGreen;
         uniform vec3 uStraw;
         uniform vec3 uStrawB;
+        uniform sampler2D uTreeMap;
+        uniform vec3 uTreeOrg;   // minX, minZ, size
+        uniform float uHasTrees;
 
         // Cheap value noise for turf grain. Prefixed to avoid colliding with
         // anything three.js declares.
@@ -429,9 +440,17 @@ export function createTerrain(renderer, toonRamp) {
           // where the trees do, then broken up by noise so their outlines
           // wander instead of running parallel to the hole.
           float strawN = ccNoise(vWorld * 0.048) * 0.62 + ccNoise(vWorld * 0.150) * 0.38;
-          float strawReach = smoothstep(-7.0, -26.0, fe);
+          // Under the canopy, and only there. Distance past the fairway edge
+          // was the obvious key and it was wrong: it spreads straw across open
+          // rough that has no tree anywhere near it, because "far enough out
+          // that a tree is allowed" is nothing like "a tree is here". This
+          // samples where they actually ended up. The fairway term stays, so a
+          // tree leaning over the short grass cannot drop a bed onto it.
+          vec2 tuv = (vWorld - uTreeOrg.xy) / uTreeOrg.z;
+          float canopy = texture2D(uTreeMap, tuv).r * uHasTrees;
+          float strawReach = smoothstep(0.10, 0.40, canopy) * smoothstep(-2.0, -8.0, fe);
           float strawM = strawReach
-                       * smoothstep(0.44, 0.60, strawN + strawReach * 0.20)
+                       * smoothstep(0.40, 0.58, strawN + strawReach * 0.26)
                        * offGreen * offSand;
           vec3 strawCol = mix(uStraw, uStrawB, ccNoise(vWorld * 0.85));
           diffuseColor.rgb = mix(diffuseColor.rgb, strawCol, strawM * 0.94);

@@ -17,6 +17,7 @@ import { createTerrain, createWater, createCreek, makeToonRamp, makeGroundRamp }
 import { createSky, createLights, createClouds, createBackdrop, FOG_COLOR } from './scenery.js';
 import {
   createTrees, createGrass, createClubhouse, createFlag, createTeeMarkers, createBridge,
+  treeMapTexture,
 } from './props.js';
 import { Golfer } from './golfer.js';
 import { Ball, CLUBS, pickClub } from './ball.js';
@@ -91,7 +92,11 @@ function buildWorld() {
   add(createBackdrop(ramp));
   clouds = add(createClouds());
 
-  terrain = add(createTerrain(renderer, groundRamp));
+  // Trees first. The terrain shader draws its pine straw beds from a map of
+  // where they actually landed, so they have to exist before it is built.
+  const trees = createTrees(ramp);
+
+  terrain = add(createTerrain(renderer, groundRamp, treeMapTexture()));
 
   // Most holes have no water at all, and the constructors read their feature's
   // dimensions, so neither may be called when that feature is absent.
@@ -99,7 +104,7 @@ function buildWorld() {
   creek = CREEK ? add(createCreek()) : null;
   if (CREEK) { const b = createBridge(ramp); if (b) add(b); }
 
-  add(createTrees(ramp));
+  add(trees);
   add(createGrass(ramp));
   sunRays = add(createSunRays());
   butterflies = add(createButterflies());
