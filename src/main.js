@@ -11,7 +11,7 @@ import * as THREE from 'three';
 import { clamp, lerp } from './util.js';
 import {
   heightAt, surfaceAt, distToHole, aimPointAhead,
-  HOLE_POS, TEE, PAR, HOLE_LENGTH,
+  HOLE_POS, TEE, PAR, HOLE_LENGTH, HOLE, setHole, POND,
 } from './course.js';
 import { createTerrain, createWater, makeToonRamp } from './terrain.js';
 import { createSky, createLights, createClouds, createBackdrop, FOG_COLOR } from './scenery.js';
@@ -24,6 +24,7 @@ import { AimLine } from './aimline.js';
 import { FreeCam } from './freecam.js';
 import { Audio } from './audio.js';
 import { Hud, scoreName } from './hud.js';
+import { HOLES, TOTAL_PAR } from './holes.js';
 
 // ---------------------------------------------------------------- renderer
 const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
@@ -54,37 +55,66 @@ const audio = new Audio();
 // ---------------------------------------------------------------- world
 let terrain, water, clouds, flag, clubhouse, golfer, ball, rig, aimLine, input, lights, freeCam;
 
+// Everything belonging to the current hole hangs off this, so switching holes
+// is a matter of disposing one subtree rather than tracking every object.
+let worldGroup = null;
+
+/** Release GPU memory for a subtree. Geometries and materials are per-hole. */
+function disposeWorld() {
+  if (!worldGroup) return;
+  worldGroup.traverse((o) => {
+    if (o.geometry) o.geometry.dispose();
+    const mats = Array.isArray(o.material) ? o.material : o.material ? [o.material] : [];
+    for (const m of mats) {
+      for (const k of ['map', 'gradientMap', 'alphaMap']) if (m[k]) m[k].dispose();
+      m.dispose();
+    }
+  });
+  scene.remove(worldGroup);
+  worldGroup = null;
+}
+
 function buildWorld() {
   const ramp = makeToonRamp();
+  worldGroup = new THREE.Group();
+  worldGroup.name = 'world';
+  scene.add(worldGroup);
+  const add = (o) => { worldGroup.add(o); return o; };
 
-  scene.add(createSky());
-  lights = createLights(scene);
-  scene.add(createBackdrop(ramp));
-  clouds = createClouds();
-  scene.add(clouds);
+  add(createSky());
+  if (!lights) lights = createLights(scene);   // lights persist across holes
+  add(createBackdrop(ramp));
+  clouds = add(createClouds());
 
-  terrain = createTerrain(renderer, ramp);
-  scene.add(terrain);
+  terrain = add(createTerrain(renderer, ramp));
 
-  water = createWater();
-  scene.add(water);
+  // Most holes have no water at all; createWater() reads the pond dimensions,
+  // so it must not be called when there isn't one.
+  water = POND ? add(createWater()) : null;
 
-  scene.add(createTrees(ramp));
-  clubhouse = createClubhouse(ramp);
-  scene.add(clubhouse);
-  scene.add(createTeeMarkers(ramp));
+  add(createTrees(ramp));
+  clubhouse = add(createClubhouse(ramp));
+  add(createTeeMarkers(ramp));
 
-  flag = createFlag(ramp);
-  scene.add(flag);
+  flag = add(createFlag(ramp));
 
   golfer = new Golfer(ramp);
-  scene.add(golfer.root);
+  add(golfer.root);
 
-  ball = new Ball(scene, ramp);
-  aimLine = new AimLine(scene);
+  ball = new Ball(worldGroup, ramp);
+  aimLine = new AimLine(worldGroup);
+}
+
+/**
+ * One-time setup. The rig, the swipe input and the freecam each attach window
+ * listeners, so they are built once and outlive any single hole — as are the
+ * lights and the HUD buttons.
+ */
+function initOnce() {
   rig = new CameraRig(camera);
   input = new SwipeSwing(renderer.domElement);
   freeCam = new FreeCam(camera, renderer.domElement);
+  wireInput();
 }
 
 // ---------------------------------------------------------------- freecam
@@ -125,6 +155,8 @@ const game = {
   shotFrom: new THREE.Vector3(),
   settleTimer: 0,
   onTee: true,
+  holeIndex: 0,
+  total: 0,     // strokes relative to par across the round
 };
 
 /** Point the player down the hole: at the pin if reachable, else at the dogleg. */
@@ -139,7 +171,18 @@ function refreshShot({ pop = false, keepAim = false } = {}) {
   const { x, z } = ball.pos;
   game.lie = surfaceAt(x, z);
   const toPin = distToHole(x, z);
-  game.club = pickClub(toPin, game.lie, game.onTee);
+  // Where a straight shot of a given carry would finish, so the caddie can
+  // decline to club us into a hazard.
+  const aimNow = keepAim ? game.aim : defaultAim(x, z);
+  const landsWet = (carry, roll) => {
+    // Sweep the whole landing-and-run-out band, not just the pitch mark.
+    const runout = carry * 0.16 * roll;
+    for (let d = carry - 4; d <= carry + runout; d += 6) {
+      if (surfaceAt(x + Math.sin(aimNow) * d, z - Math.cos(aimNow) * d) === 'water') return true;
+    }
+    return false;
+  };
+  game.club = pickClub(toPin, game.lie, game.onTee, landsWet);
   if (!keepAim) game.aim = defaultAim(x, z);
 
   golfer.forceIdle();
@@ -159,6 +202,16 @@ function setAim(a) {
 }
 
 // ---------------------------------------------------------------- shot flow
+/** Tear the world down, load a new hole, and build it again. */
+function loadHole(index) {
+  game.holeIndex = ((index % HOLES.length) + HOLES.length) % HOLES.length;
+  setHole(HOLES[game.holeIndex]);
+  disposeWorld();
+  buildWorld();
+  wireHole();
+  beginHole();
+}
+
 function beginHole() {
   game.strokes = 0;
   game.onTee = true;
@@ -167,7 +220,7 @@ function beginHole() {
   ball.placeAt(TEE.x, TEE.z);
   refreshShot();
   hud.hideCard();
-  hud.setHoleLength(HOLE_LENGTH);
+  hud.setHole(HOLE.n, HOLE.name, PAR, HOLE_LENGTH);
   rig.setMode('intro');
   rig.introT = 0;
   rig.update(0.016, camCtx());
@@ -227,7 +280,14 @@ function onHoled() {
   hud.showPower(false);
   hud.hint('');
   setTimeout(() => {
-    hud.card(scoreName(game.strokes, PAR), `${game.strokes} stroke${game.strokes === 1 ? '' : 's'} · par ${PAR}`);
+    game.total += game.strokes - PAR;
+    const rel = game.total === 0 ? 'level' : game.total > 0 ? `+${game.total}` : `${game.total}`;
+    const last = game.holeIndex === HOLES.length - 1;
+    hud.card(
+      scoreName(game.strokes, PAR),
+      `${game.strokes} stroke${game.strokes === 1 ? '' : 's'} · par ${PAR}  ·  ${rel} thru ${game.holeIndex + 1}`,
+      last ? 'Start again' : `Hole ${HOLES[game.holeIndex + 1].n} →`
+    );
   }, 1400);
 }
 
@@ -289,8 +349,18 @@ function wireInput() {
     hud.hint('Swipe down to load, then flick up to swing', 3);
   };
 
-  golfer.onImpact = (power) => launchShot(power);
+  hud.onAgain(() => {
+    hud.hideCard();
+    const last = game.holeIndex === HOLES.length - 1;
+    if (last) { game.total = 0; loadHole(0); } else loadHole(game.holeIndex + 1);
+  });
+  hud.onSound((on) => audio.setEnabled(on));
 
+}
+
+/** Callbacks that belong to this hole's golfer and ball. */
+function wireHole() {
+  golfer.onImpact = (power) => launchShot(power);
   ball.onRest = () => onBallRest();
   ball.onHoled = () => onHoled();
   ball.onEvent = (type, payload) => {
@@ -298,10 +368,6 @@ function wireInput() {
     else if (type === 'splash') { audio.splash(); penalty('splash'); }
     else if (type === 'ob') penalty('ob');
   };
-
-  hud.onAgain(() => { hud.hideCard(); beginHole(); });
-  hud.onSound((on) => audio.setEnabled(on));
-
 }
 
 // ---------------------------------------------------------------- camera ctx
@@ -334,7 +400,7 @@ function frame() {
   ball.updateScale(camera);
   aimLine.update(dt);
   clouds.userData.tick(dt);
-  water.userData.tick(time);
+  if (water) water.userData.tick(time);
   flag.userData.tick(time);
   clubhouse.userData.tick(dt);
 
@@ -430,9 +496,8 @@ window.addEventListener('resize', onResize);
 
 // Build on the next frame so the loading screen actually paints first.
 requestAnimationFrame(() => {
-  buildWorld();
-  wireInput();
-  beginHole();
+  initOnce();
+  loadHole(0);
   hud.hideLoader();
   clock.getDelta();
   frame();

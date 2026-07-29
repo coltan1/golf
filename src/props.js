@@ -11,7 +11,7 @@ import * as THREE from 'three';
 import { mulberry32, lerp, hash3, clamp } from './util.js';
 import {
   heightAt, nearest, centreXAt, fairwayHalfWidth, bunkerField, pondField,
-  GREEN, HOLE_POS, TEE,
+  GREEN, HOLE_POS, TEE, WORLD_CX, WORLD_CZ, WORLD_SIZE,
 } from './course.js';
 
 // ---------------------------------------------------------------- geometry
@@ -110,7 +110,7 @@ export function createTrees(toonRamp) {
     const y = heightAt(x, z);
     if (y < -0.5) return; // never standing in the pond bed
 
-    if (rnd() < 0.34) {
+    if (rnd() < 0.62) {
       const s = lerp(0.72, 1.25, rnd()) * sizeScale;
       pines.push({ x, y: y - 0.2, z, s, rot: rnd() * Math.PI * 2, v: rnd() });
       return;
@@ -134,27 +134,31 @@ export function createTrees(toonRamp) {
     }
   };
 
+  // The hole decides how much ground there is to plant.
+  const zNear = TEE.z + 20;
+  const zFar = WORLD_CZ - WORLD_SIZE * 0.44;
+
   // Pass A — sparse specimen trees framing the corridor. Offsets are measured
   // from the centreline, so the tree line curves with the dogleg.
-  for (let i = 0; i < 150; i++) {
-    const z = lerp(24, -452, rnd());
+  for (let i = 0; i < 190; i++) {
+    const z = lerp(zNear, zFar, rnd());
     const side = rnd() < 0.5 ? 1 : -1;
     const off = lerp(34, 92, Math.pow(rnd(), 0.6));
     plant(centreXAt(z) + side * off + lerp(-6, 6, rnd()), z + lerp(-8, 8, rnd()), 1);
   }
 
   // Pass B — the treeline proper, further out, quietly closing the world off.
-  for (let i = 0; i < 320; i++) {
-    const z = lerp(60, -480, rnd());
+  for (let i = 0; i < 380; i++) {
+    const z = lerp(zNear + 40, zFar - 30, rnd());
     const side = rnd() < 0.5 ? 1 : -1;
     plant(centreXAt(z) + side * lerp(105, 200, rnd()), z, lerp(0.9, 1.3, rnd()));
   }
 
   // Pass C — a scattered far forest that melts into the fog.
-  for (let i = 0; i < 340; i++) {
+  for (let i = 0; i < 380; i++) {
     const a = rnd() * Math.PI * 2;
-    const r = lerp(210, 345, rnd());
-    plant(Math.sin(a) * r, Math.cos(a) * r - 190, lerp(1.0, 1.5, rnd()));
+    const r = lerp(WORLD_SIZE * 0.24, WORLD_SIZE * 0.40, rnd());
+    plant(WORLD_CX + Math.sin(a) * r, WORLD_CZ + Math.cos(a) * r, lerp(1.0, 1.5, rnd()));
   }
 
   // ------------------------------------------------------------ build meshes

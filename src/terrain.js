@@ -14,8 +14,8 @@
 
 import * as THREE from 'three';
 import {
-  WORLD_SIZE, WORLD_CX, WORLD_CZ, WATER_Y, POND, GREEN, MOW_PERIOD, CART_PATH,
-  heightAt, makeCourseTexture, nearest, fairwayHalfWidth,
+  WORLD_SIZE, WORLD_CX, WORLD_CZ, WATER_Y, POND, MOW_PERIOD, CART_PATH,
+  SURFACE_COLORS, heightAt, makeCourseTexture, nearest, fairwayHalfWidth, greenEdge,
 } from './course.js';
 import { smoothstep } from './util.js';
 
@@ -66,8 +66,13 @@ export function makeToonRamp() {
  */
 function surfaceEdges(x, z, n, out) {
   out.fair = fairwayHalfWidth(n.t) - n.dist;
-  out.green = GREEN.r - Math.hypot(x - GREEN.x, z - GREEN.z);
+  out.green = greenEdge(x, z);
   return out;
+}
+
+/** Surface colours the shader needs to rebuild a hard edge, in linear space. */
+function colorUniform(rgb) {
+  return new THREE.Color().setRGB(rgb[0] / 255, rgb[1] / 255, rgb[2] / 255, THREE.SRGBColorSpace);
 }
 
 export function createTerrain(renderer, toonRamp) {
@@ -134,6 +139,12 @@ export function createTerrain(renderer, toonRamp) {
   // grooves, turf grain and cart-path detail — all drawn per-pixel and
   // antialiased against the pixel footprint so nothing shimmers as it recedes.
   mat.onBeforeCompile = (shader) => {
+    shader.uniforms.uRough  = { value: colorUniform(SURFACE_COLORS.roughAlt) };
+    shader.uniforms.uFairA  = { value: colorUniform(SURFACE_COLORS.fairA) };
+    shader.uniforms.uFairB  = { value: colorUniform(SURFACE_COLORS.fairB) };
+    shader.uniforms.uCollar = { value: colorUniform(SURFACE_COLORS.collar) };
+    shader.uniforms.uGreen  = { value: colorUniform(SURFACE_COLORS.greenA) };
+
     shader.vertexShader = shader.vertexShader
       .replace('#include <common>', `#include <common>
         attribute vec3 aCourse;
@@ -147,6 +158,11 @@ export function createTerrain(renderer, toonRamp) {
       .replace('#include <common>', `#include <common>
         varying vec3 vCourse;
         varying vec2 vWorld;
+        uniform vec3 uRough;
+        uniform vec3 uFairA;
+        uniform vec3 uFairB;
+        uniform vec3 uCollar;
+        uniform vec3 uGreen;
 
         // Cheap value noise for turf grain. Prefixed to avoid colliding with
         // anything three.js declares.
@@ -196,8 +212,25 @@ export function createTerrain(renderer, toonRamp) {
           float slabEdge = ccSeam(pd - ${CART_PATH.halfWidth.toFixed(2)}, 0.22) * inZ;
           diffuseColor.rgb *= 1.0 - 0.20 * joint - 0.16 * slabEdge;
 
-          // --- mowing grooves ----------------------------------------------
+          // --- hard surface boundaries -------------------------------------
+          // The bake can only resolve an edge to a texel or so, and a texel is
+          // most of a yard. Within a couple of yards of a cut line we discard
+          // its blur and rebuild the colour from the two pure surfaces using
+          // the per-pixel mask, which is what makes the edge genuinely hard
+          // instead of merely tight.
           float period = ${MOW_PERIOD.toFixed(2)};  // yards between passes
+          float stripe = smoothstep(-0.6, 0.6, sin(vCourse.x * (6.2831853 / period)));
+          vec3 fairCol = mix(uFairA, uFairB, stripe);
+
+          float nearF = 1.0 - smoothstep(0.6, 2.6, abs(fe));
+          diffuseColor.rgb = mix(diffuseColor.rgb, mix(uRough, fairCol, fairM),
+                                 nearF * 0.92 * offGreen * (1.0 - pathM));
+
+          float nearG = 1.0 - smoothstep(0.5, 2.2, abs(ge));
+          diffuseColor.rgb = mix(diffuseColor.rgb, mix(uCollar, uGreen, greenM),
+                                 nearG * 0.92 * (1.0 - pathM));
+
+          // --- mowing grooves ----------------------------------------------
           float footprint = fwidth(vCourse.x);
           float groove = sin(vCourse.x * (6.2831853 / period));
           float gaa = 1.0 - smoothstep(period * 0.22, period * 0.60, footprint);

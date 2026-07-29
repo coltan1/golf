@@ -11,6 +11,7 @@
 
 import * as THREE from 'three';
 import { mulberry32, lerp, fbm2 } from './util.js';
+import { WORLD_CX, WORLD_CZ } from './course.js';
 
 export const FOG_COLOR = 0xdcf0fa;
 
@@ -171,7 +172,7 @@ export function createBackdrop(toonRamp) {
         ),
         mat
       );
-      mesh.position.set(Math.sin(a) * r, 0, Math.cos(a) * r - 190);
+      mesh.position.set(WORLD_CX + Math.sin(a) * r, 0, WORLD_CZ + Math.cos(a) * r);
       mesh.rotation.y = a;
       // Far too big and far away to take part in the shadow map.
       mesh.castShadow = mesh.receiveShadow = false;

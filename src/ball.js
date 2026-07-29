@@ -31,14 +31,36 @@ export const CLUBS = {
   putter: { name: 'Putter',     carry:   0, apex: 0.000, roll: 1.00 },
 };
 
-/** Auto club selection: pick the club whose full swing just reaches the pin. */
-export function pickClub(distance, surface, isTee) {
+/**
+ * Auto club selection: the club whose full swing just reaches the pin.
+ *
+ * @param landsWet optional predicate (carryYards, rollFactor) — does a
+ *   straight shot with that club finish in a hazard, *including its run-out*?
+ *   When the reaching club would put you in the water, the caddie lays up
+ *   short of it instead. Checking carry alone is not enough: on a par 5 with a
+ *   pond fronting the green the lay-up lands dry and then rolls straight in.
+ */
+export function pickClub(distance, surface, isTee, landsWet) {
   if (surface === 'green') return CLUBS.putter;
   if (surface === 'sand') return distance > 70 ? CLUBS.wedge : CLUBS.lob;
-  if (isTee && distance > 235) return CLUBS.driver;
-  const order = ['lob', 'wedge', 'iron9', 'iron7', 'iron5', 'hybrid', 'wood', 'driver'];
-  for (const k of order) if (CLUBS[k].carry >= distance * 0.98) return CLUBS[k];
-  return isTee ? CLUBS.driver : CLUBS.wood;
+
+  // Driver only off the tee; from the deck the longest club is the 3 wood,
+  // so a par 5 naturally becomes drive, lay up, approach.
+  const order = ['lob', 'wedge', 'iron9', 'iron7', 'iron5', 'hybrid', 'wood'];
+  if (isTee) order.push('driver');
+
+  let reach = null;
+  for (const k of order) if (CLUBS[k].carry >= distance * 0.98) { reach = CLUBS[k]; break; }
+  const chosen = reach ?? (isTee ? CLUBS.driver : CLUBS.wood);
+
+  if (!landsWet || !landsWet(chosen.carry, chosen.roll)) return chosen;
+  // Step down to the longest club that still stops dry. If everything is wet
+  // it is a forced carry, so hand back the reaching club and commit.
+  for (let i = order.length - 1; i >= 0; i--) {
+    const c = CLUBS[order[i]];
+    if (c.carry < chosen.carry && !landsWet(c.carry, c.roll)) return c;
+  }
+  return chosen;
 }
 
 /** How much of your swing survives the lie. Gentle — this is not a punishment. */

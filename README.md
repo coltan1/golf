@@ -1,6 +1,6 @@
-# Sunny Links — Hole 1
+# Sunny Links
 
-A calm, stylised 3D golf game. One hole, played with a single swipe.
+A calm, stylised 3D golf game. Eighteen holes, played with a single swipe.
 
 Three.js + vanilla ES modules. No build step, no bundler, no assets — every
 texture, sound and piece of geometry is generated at runtime.
@@ -55,12 +55,32 @@ Power comes from how far you pull *and* how fast. A committed forward flick
 adds a little pop — it never subtracts, and there is no randomness anywhere.
 The club is chosen for you based on the distance left and your lie.
 
+## The course
+
+Eighteen holes in [holes.js](src/holes.js), with routings approximated from a
+course map and published yardages. They're built to *play* like their
+counterparts — length, dogleg direction, where the sand sits, which side the
+water is on, how the fairway pinches — rather than to be surveyed
+reproductions. It comes out at par 72 and 7,545 yards.
+
+Features are authored path-relative (`at` yards along the centreline, `off`
+yards left or right of it) and resolved to world positions by `setHole()`.
+Absolute coordinates are miserable to write and impossible to keep consistent
+the moment a centreline moves.
+
+`scripts/` has no build step, but there is a headless play-test that loads every
+hole, checks its built length against the stated yardage, scans for cliffs,
+verifies the line of play is playable ground, and plays the hole out with a
+scripted golfer. That is the only practical way to know eighteen hand-authored
+layouts are all finishable.
+
 ## Architecture
 
 ```
 index.html        import map, HUD markup, all CSS
 src/
   main.js         bootstrap, game state machine, frame loop
+  holes.js        the eighteen layouts
   course.js       the hole, described once — layout maths, terrain height,
                   surface classification, and the baked course texture
   terrain.js      sculpted ground mesh, pond surface, toon ramp

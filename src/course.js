@@ -1,75 +1,81 @@
 /**
- * course.js — the hole, described once.
+ * course.js — the active hole, described once.
  *
  * Every visual (the baked fairway texture, the sculpted terrain) and every
  * gameplay rule (where the ball rolls fast, where it plugs, where it splashes)
  * reads from the functions in this file. One source of truth means the ball
  * always behaves exactly the way the ground *looks* like it should.
  *
- * Units: 1 world unit ≈ 1 yard. The hole plays ~400 yards, par 4.
- * Play direction is -Z; the tee sits near the origin.
+ * The layout itself lives in holes.js. `setHole()` resolves a hole definition
+ * into the sampled centreline and world-space features everything else queries,
+ * so switching holes is a matter of calling it and rebuilding the world.
+ *
+ * Units: 1 world unit ≈ 1 yard.
  */
 
 import { CatmullRomCurve3, Vector3 } from 'three';
 import { clamp, lerp, smoothstep, fbm2 } from './util.js';
+import { HOLES } from './holes.js';
 
 // ---------------------------------------------------------------- world box
-// The terrain plane and the baked course texture both cover this square.
-export const WORLD_SIZE = 780;
-export const WORLD_CX = 0;
-export const WORLD_CZ = -190;
-
-// ---------------------------------------------------------------- landmarks
-export const TEE = { x: 0, z: 6 };
-export const GREEN = { x: 31, z: -388, r: 17 };
-export const HOLE_POS = { x: 33.5, z: -391 };
-export const PAR = 4;
+// The terrain plane and the baked course texture both cover this square. It is
+// re-centred per hole so long holes get the room they need.
+export let WORLD_SIZE = 900;
+export let WORLD_CX = 0;
+export let WORLD_CZ = -300;
 
 /**
- * Yards between mowing passes. The baked fairway bands below and the per-pixel
- * grooves in terrain.js both use this period against the same signed distance,
- * so the two patterns stay exactly in phase and reinforce each other.
- * Bigger number = wider, fewer stripes.
+ * Yards between mowing passes. The baked fairway bands and the per-pixel
+ * grooves in terrain.js both use this against the same signed distance, so the
+ * two patterns stay exactly in phase. Bigger = wider, fewer stripes.
  */
 export const MOW_PERIOD = 4.0;
 
-/** Greenside + fairway bunkers (soft ellipses). */
-const BUNKERS = [
-  { x: 13, z: -372, rx: 11.5, rz: 7.5, rot: 0.42 },
-  { x: 49, z: -391, rx: 9.5, rz: 6.5, rot: -0.35 },
-  { x: -13, z: -198, rx: 10.5, rz: 7.0, rot: 0.18 },
-];
+// ---------------------------------------------------------------- live state
+export let HOLE = null;          // the active definition from holes.js
+export let TEE = { x: 0, z: 6 };
+export let GREEN = { x: 0, z: 0, r: 15, rx: 15, rz: 15, rot: 0 };
+export let HOLE_POS = { x: 0, z: 0 };
+export let PAR = 4;
+export let HOLE_LENGTH = 0;
+export let WATER_Y = -999;
+export let BUNKERS = [];
+export let POND = null;
+export let MOUNDS = [];
+export let CART_PATH = { offset: 40, halfWidth: 3.4, zFrom: -20, zTo: -400 };
 
-/** A calm pond well left of the landing zone — pretty, and a gentle warning. */
-const POND = { x: -58, z: -286, rx: 32, rz: 25 };
-
-// ---------------------------------------------------------------- centreline
-// Gentle late dogleg right. The last point runs past the green so the
-// centreline never ends abruptly under the putting surface.
-const PATH_POINTS = [
-  new Vector3(0, 0, 6),
-  new Vector3(-4, 0, -70),
-  new Vector3(-9, 0, -152),
-  new Vector3(2, 0, -242),
-  new Vector3(22, 0, -322),
-  new Vector3(31, 0, -388),
-  new Vector3(34, 0, -436),
-];
-
+// Sampled centreline.
 const N = 700;
 const pX = new Float32Array(N);
 const pZ = new Float32Array(N);
-const pTX = new Float32Array(N); // unit tangent
+const pTX = new Float32Array(N);
 const pTZ = new Float32Array(N);
-const pS = new Float32Array(N);  // cumulative arc length (yards from the tee)
+const pS = new Float32Array(N);
 
-(function buildCentreline() {
-  const curve = new CatmullRomCurve3(PATH_POINTS, false, 'catmullrom', 0.5);
+let widthProfile = [22, 20, 18, 17];
+let GREEN_BASE = 0;
+
+// ---------------------------------------------------------------- setup
+/** Resolve a path-relative feature (`at` yards along, `off` yards right). */
+function resolve(at, off) {
+  let i = 0;
+  while (i < N - 1 && pS[i] < at) i++;
+  // Right-hand perpendicular: for a tangent heading -Z this is +X.
+  return { x: pX[i] - pTZ[i] * off, z: pZ[i] + pTX[i] * off };
+}
+
+/** Load a hole and rebuild every derived value. */
+export function setHole(def) {
+  HOLE = def;
+  PAR = def.par;
+  widthProfile = def.width;
+
+  const pts = def.path.map(([x, z]) => new Vector3(x, 0, z));
+  const curve = new CatmullRomCurve3(pts, false, 'catmullrom', 0.5);
   const tmp = new Vector3();
   for (let i = 0; i < N; i++) {
     curve.getPoint(i / (N - 1), tmp);
-    pX[i] = tmp.x;
-    pZ[i] = tmp.z;
+    pX[i] = tmp.x; pZ[i] = tmp.z;
   }
   let acc = 0;
   for (let i = 0; i < N; i++) {
@@ -80,55 +86,69 @@ const pS = new Float32Array(N);  // cumulative arc length (yards from the tee)
     if (i > 0) acc += Math.hypot(pX[i] - pX[i - 1], pZ[i] - pZ[i - 1]);
     pS[i] = acc;
   }
-})();
 
-/** Total playing length, tee to cup (for the HUD). */
-export const HOLE_LENGTH = (() => {
-  const n = nearest(HOLE_POS.x, HOLE_POS.z, {});
-  return n.s;
-})();
+  TEE = { x: pX[0], z: pZ[0] };
 
-// ---------------------------------------------------------------- queries
-// A reusable result object keeps the texture bake (1M+ samples) allocation-free.
-const _n = { dist: 0, side: 0, perp: 0, t: 0, s: 0, i: 0 };
+  const g = resolve(def.green.at, def.green.off ?? 0);
+  const gr = def.green.r;
+  const squash = def.green.squash ?? 1;
+  GREEN = {
+    x: g.x, z: g.z, r: gr,
+    rx: gr, rz: gr * squash, rot: def.green.angle ?? 0,
+  };
+  HOLE_POS = { x: g.x + 1.5, z: g.z - 2 };
 
-/**
- * Nearest point on the centreline.
- * The path is monotonic in Z, so we jump straight to the right neighbourhood
- * instead of scanning all 700 samples — this is what makes the bake fast.
- */
-export function nearest(x, z, out = _n) {
-  // Seed at the sample with the matching Z, then scan outward. The window has
-  // to be generous: where the hole runs diagonally, the *perpendicular*
-  // closest point sits well up or down the path from the matching Z.
-  const i0 = indexForZ(z);
-  const lo = Math.max(0, i0 - 26), hi = Math.min(N - 1, i0 + 26);
+  BUNKERS = (def.bunkers ?? []).map((b) => {
+    const p = resolve(b.at, b.off);
+    return { x: p.x, z: p.z, rx: b.rx, rz: b.rz, rot: b.rot ?? 0 };
+  });
 
-  let best = i0, bestD2 = Infinity;
-  for (let i = lo; i <= hi; i++) {
-    const dx = x - pX[i], dz = z - pZ[i];
-    const d2 = dx * dx + dz * dz;
-    if (d2 < bestD2) { bestD2 = d2; best = i; }
+  POND = null;
+  if (def.water) {
+    const p = resolve(def.water.at, def.water.off);
+    POND = { x: p.x, z: p.z, rx: def.water.rx, rz: def.water.rz, rot: def.water.rot ?? 0 };
   }
-  const dx = x - pX[best], dz = z - pZ[best];
-  out.dist = Math.sqrt(bestD2);
-  // The 2D cross product with the unit tangent *is* the signed perpendicular
-  // distance. Unlike `dist` it passes cleanly through zero at the centreline,
-  // which is what the mowing grooves key off — `dist` would kink there.
-  out.perp = pTZ[best] * dx - pTX[best] * dz;
-  out.side = out.perp < 0 ? 1 : -1; // +1 = right of play
-  out.t = best / (N - 1);
-  out.s = pS[best];
-  out.i = best;
-  return out;
+
+  MOUNDS = (def.mounds ?? []).map((m) => {
+    const p = resolve(m.at, m.off);
+    return { x: p.x, z: p.z, r: m.r, h: m.h };
+  });
+
+  // Frame the world around the hole so nothing runs off the edge.
+  let minX = Infinity, maxX = -Infinity, minZ = Infinity, maxZ = -Infinity;
+  for (let i = 0; i < N; i++) {
+    minX = Math.min(minX, pX[i]); maxX = Math.max(maxX, pX[i]);
+    minZ = Math.min(minZ, pZ[i]); maxZ = Math.max(maxZ, pZ[i]);
+  }
+  WORLD_CX = (minX + maxX) / 2;
+  WORLD_CZ = (minZ + maxZ) / 2;
+  WORLD_SIZE = Math.max(760, (maxZ - minZ) * 1.55, (maxX - minX) * 2.6);
+
+  HOLE_LENGTH = nearest(HOLE_POS.x, HOLE_POS.z, {}).s;
+  GREEN_BASE = swell(GREEN.x, GREEN.z);
+  WATER_Y = POND ? swell(POND.x, POND.z) - 1.15 : -999;
+
+  CART_PATH = {
+    offset: 40,
+    halfWidth: 3.4,
+    zFrom: pZ[0] - 24,
+    zTo: pZ[N - 1] + 30,
+  };
 }
 
-/**
- * Index of the last centreline sample at or before `z`.
- * The samples are uniform in curve *parameter*, not in Z, so estimating the
- * index by interpolating Z is wrong wherever the curve steepens — hence a
- * real (and still cheap) binary search. pZ decreases monotonically.
- */
+/** 0…1 coverage of the cart path at a point. `n` is a `nearest()` result. */
+export function cartPathAt(x, z, n) {
+  if (z > CART_PATH.zFrom || z < CART_PATH.zTo || n.side < 0) return 0;
+  const d = Math.abs(n.dist - CART_PATH.offset);
+  const fade = smoothstep(CART_PATH.zFrom - 6, CART_PATH.zFrom - 16, z) *
+               smoothstep(CART_PATH.zTo + 6, CART_PATH.zTo + 16, z);
+  return (1 - smoothstep(CART_PATH.halfWidth - 0.45, CART_PATH.halfWidth + 0.45, d)) * fade;
+}
+
+// ---------------------------------------------------------------- queries
+const _n = { dist: 0, side: 0, perp: 0, t: 0, s: 0, i: 0 };
+
+/** Index of the last centreline sample at or before `z` (pZ decreases). */
 function indexForZ(z) {
   if (z >= pZ[0]) return 0;
   if (z <= pZ[N - 1]) return N - 2;
@@ -149,27 +169,7 @@ export function centreXAt(z) {
   return lerp(pX[i], pX[i + 1], t);
 }
 
-/** Fairway half-width in yards — generous off the tee, pinched at the dogleg. */
-export function fairwayHalfWidth(t) {
-  return 17 + 7.5 * Math.sin(t * Math.PI) - 4 * smoothstep(0.72, 0.95, t);
-}
-
-/**
- * The cart path, offset to the right of play. Shared by the texture bake, the
- * height field and the terrain shader so all three agree on where it runs.
- */
-export const CART_PATH = { offset: 38, halfWidth: 3.4, zFrom: -18, zTo: -352 };
-
-/** 0…1 coverage of the cart path at a point. `n` is a `nearest()` result. */
-export function cartPathAt(x, z, n) {
-  if (z > CART_PATH.zFrom || z < CART_PATH.zTo || n.side < 0) return 0;
-  const d = Math.abs(n.dist - CART_PATH.offset);
-  const fade = smoothstep(CART_PATH.zFrom - 6, CART_PATH.zFrom - 14, z) *
-               smoothstep(CART_PATH.zTo + 6, CART_PATH.zTo + 14, z);
-  return (1 - smoothstep(CART_PATH.halfWidth - 0.45, CART_PATH.halfWidth + 0.45, d)) * fade;
-}
-
-/** A point `dist` yards further down the hole — used to aim the tee shot. */
+/** A point `dist` yards further down the hole — used to aim. */
 export function aimPointAhead(x, z, dist) {
   const n = nearest(x, z);
   const target = n.s + dist;
@@ -178,7 +178,45 @@ export function aimPointAhead(x, z, dist) {
   return { x: pX[i], z: pZ[i] };
 }
 
-/** Squared-ish normalised distance inside an ellipse (1.0 = on the edge). */
+/**
+ * Nearest point on the centreline. Seeded by a binary search on Z, then
+ * scanned outward — the window has to be generous because where the hole runs
+ * diagonally the perpendicular closest point sits well up or down the path
+ * from the sample with the matching Z.
+ */
+export function nearest(x, z, out = _n) {
+  const i0 = indexForZ(z);
+  const lo = Math.max(0, i0 - 26), hi = Math.min(N - 1, i0 + 26);
+
+  let best = i0, bestD2 = Infinity;
+  for (let i = lo; i <= hi; i++) {
+    const dx = x - pX[i], dz = z - pZ[i];
+    const d2 = dx * dx + dz * dz;
+    if (d2 < bestD2) { bestD2 = d2; best = i; }
+  }
+  const dx = x - pX[best], dz = z - pZ[best];
+  out.dist = Math.sqrt(bestD2);
+  // The 2D cross product with the unit tangent *is* the signed perpendicular
+  // distance, and unlike `dist` it passes cleanly through zero at the
+  // centreline — which is what the mowing grooves key off.
+  out.perp = pTZ[best] * dx - pTX[best] * dz;
+  out.side = out.perp < 0 ? 1 : -1; // +1 = right of play
+  out.t = best / (N - 1);
+  out.s = pS[best];
+  out.i = best;
+  return out;
+}
+
+/** Fairway half-width in yards, interpolated along the width profile. */
+export function fairwayHalfWidth(t) {
+  const w = widthProfile;
+  const f = clamp(t, 0, 1) * (w.length - 1);
+  const i = Math.floor(f);
+  const j = Math.min(w.length - 1, i + 1);
+  return lerp(w[i], w[j], f - i);
+}
+
+/** Normalised distance inside an ellipse (1.0 = on the edge). */
 function ellipseField(x, z, e) {
   const c = Math.cos(e.rot || 0), s = Math.sin(e.rot || 0);
   const dx = x - e.x, dz = z - e.z;
@@ -187,25 +225,29 @@ function ellipseField(x, z, e) {
   return Math.sqrt(u * u + v * v);
 }
 
-/** Smallest bunker field value at this point (<1 means inside a bunker). */
 export function bunkerField(x, z) {
   let m = Infinity;
   for (let i = 0; i < BUNKERS.length; i++) m = Math.min(m, ellipseField(x, z, BUNKERS[i]));
   return m;
 }
-export function pondField(x, z) { return ellipseField(x, z, POND); }
+export function pondField(x, z) { return POND ? ellipseField(x, z, POND) : Infinity; }
+export function greenField(x, z) { return ellipseField(x, z, GREEN); }
+
+/** Signed yards inside the green — positive on the putting surface. */
+export function greenEdge(x, z) {
+  return (1 - greenField(x, z)) * ((GREEN.rx + GREEN.rz) * 0.5);
+}
 
 export function distToHole(x, z) { return Math.hypot(x - HOLE_POS.x, z - HOLE_POS.z); }
-function distToGreen(x, z) { return Math.hypot(x - GREEN.x, z - GREEN.z); }
 
 /**
- * Surface classification — drives friction, bounce and the shot the player gets.
+ * Surface classification — drives friction, bounce and the shot you get.
  * Priority: water > bunker > green > fairway > rough.
  */
 export function surfaceAt(x, z) {
   if (pondField(x, z) < 1) return 'water';
   if (bunkerField(x, z) < 1) return 'sand';
-  if (distToGreen(x, z) < GREEN.r) return 'green';
+  if (greenField(x, z) < 1) return 'green';
   const n = nearest(x, z);
   if (n.dist < fairwayHalfWidth(n.t)) return 'fairway';
   if (n.dist > 62) return 'deep';
@@ -215,12 +257,10 @@ export function surfaceAt(x, z) {
 /** True once the ball has wandered outside the playable world. */
 export function isOutOfBounds(x, z) {
   const n = nearest(x, z);
-  return n.dist > 130 || z > 48 || z < -470;
+  return n.dist > 130 || z > pZ[0] + 45 || z < pZ[N - 1] - 45;
 }
 
 // ---------------------------------------------------------------- height
-// Two octave sets: `rolling` for the wild country, `swell` for the mown
-// corridor, which stays smooth so putts read true and stripes stay legible.
 function rolling(x, z) {
   return (
     3.1 * fbm2(x * 0.0062, z * 0.0051) +
@@ -232,13 +272,10 @@ function swell(x, z) {
   return 2.4 * fbm2(x * 0.0058 + 0.3, z * 0.0047 - 0.8) + 2.0 * Math.sin((x * 0.4 + z) * 0.0039 + 0.7);
 }
 
-export const WATER_Y = swell(POND.x, POND.z) - 1.15;
-const GREEN_BASE = swell(GREEN.x, GREEN.z);
-
 /**
  * Ground height at any point. Sculpted in layers:
  *   rolling country → flattened toward the mown corridor → green pad →
- *   bunker bowls with soft lips → pond basin → a low rim that hides the horizon.
+ *   mounding → bunker bowls → pond basin → grass-height lips → world rim.
  */
 export function heightAt(x, z) {
   const n = nearest(x, z);
@@ -253,14 +290,23 @@ export function heightAt(x, z) {
   // Putting surface: a near-flat pad on a defined shoulder. The blend is
   // deliberately tight — a green is built up as a pad, and that shoulder is a
   // big part of why a green reads as a green rather than as mown fairway.
-  const gd = distToGreen(x, z);
-  const gb = 1 - smoothstep(GREEN.r - 1.0, GREEN.r + 3.0, gd);
+  const ge = greenEdge(x, z);
+  const gb = smoothstep(-3.0, 1.0, ge);
   if (gb > 0) {
-    // A gentle crown for putt break, and only a trace of undulation — enough
-    // that putts read, little enough that the surface stays visually clean.
-    const crown = 0.55 * Math.cos(clamp(gd / GREEN.r, 0, 1) * Math.PI * 0.5) +
+    // A gentle crown for putt break, plus a whisper of tier.
+    const crown = 0.55 * clamp(ge / GREEN.r, 0, 1) +
                   0.16 * Math.sin(x * 0.06 + 1.1) * Math.cos(z * 0.055);
     h = lerp(h, GREEN_BASE + crown, gb);
+  }
+
+  // Free-standing mounding, suppressed over the putting surface.
+  for (let i = 0; i < MOUNDS.length; i++) {
+    const m = MOUNDS[i];
+    const d = Math.hypot(x - m.x, z - m.z);
+    if (d < m.r) {
+      const k = Math.cos((d / m.r) * Math.PI * 0.5);
+      h += m.h * k * k * (1 - gb);
+    }
   }
 
   // Bunkers: scooped bowl, gentle raised lip just outside the sand.
@@ -275,24 +321,22 @@ export function heightAt(x, z) {
   }
 
   // Pond basin, always safely below the waterline.
-  const pf = pondField(x, z);
-  if (pf < 1.5) {
-    const bed = 1 - smoothstep(0, 1.05, pf);
-    h = lerp(h, WATER_Y - 3.2, bed);
-    h -= 0.5 * smoothstep(1.3, 1.0, pf) * (1 - bed); // soft shoreline dip
+  if (POND) {
+    const pf = pondField(x, z);
+    if (pf < 1.5) {
+      const bed = 1 - smoothstep(0, 1.05, pf);
+      h = lerp(h, WATER_Y - 3.2, bed);
+      h -= 0.5 * smoothstep(1.3, 1.0, pf) * (1 - bed);
+    }
   }
 
-  // Rough is genuinely lumpy, not just a different colour. Real relief means
-  // it catches the toon ramp's bands and casts its own little shadows, which
-  // is what separates it from the billiard-flat mown surfaces. Wavelengths
-  // stay well above the ~3 yard grid spacing so the mesh can resolve them.
+  // Rough is genuinely lumpy — real relief so it catches the toon ramp's bands
+  // and shades itself. One long octave only: fbm2's top harmonic is 6x its
+  // base, so anything shorter facets on the terrain grid.
   const mownTight = Math.max(
     1 - smoothstep(hw - 0.8, hw + 1.2, n.dist),
-    1 - smoothstep(GREEN.r - 0.8, GREEN.r + 1.2, gd)
+    smoothstep(-1.2, 0.8, ge)
   );
-  // One octave only, and a long one: fbm2's top harmonic is 6× its base, so
-  // 0.072 bottoms out near a 14-yard wavelength — about four vertices per
-  // bump on the ~3 yard grid. Anything shorter facets instead of undulating.
   const path = cartPathAt(x, z, n);
   const unmown = (1 - mownTight) * (1 - path);
   if (unmown > 0.001) {
@@ -308,11 +352,6 @@ export function heightAt(x, z) {
   // The cart path is graded: sits just below the turf either side of it.
   h -= 0.22 * path;
 
-  // Elevated tee. The hole falls away from you for the first hundred yards,
-  // which opens the whole view up — the reference's downhill composition.
-  const teeD = Math.hypot(x - TEE.x, z - TEE.z);
-  h += 15 * (1 - smoothstep(9, 135, teeD));
-
   // A distant rim so the world never shows a cut edge against the sky.
   const rim = Math.max(0, n.dist - 150) * 0.11;
   h += Math.min(rim, 26) + smoothstep(150, 320, n.dist) * 12;
@@ -327,7 +366,7 @@ export function heightAt(x, z) {
  */
 export function surfaceHeightAt(x, z) {
   const h = heightAt(x, z);
-  return pondField(x, z) < 1 ? Math.max(h, WATER_Y) : h;
+  return POND && pondField(x, z) < 1 ? Math.max(h, WATER_Y) : h;
 }
 
 /** Central-difference surface gradient — used for putt break and roll. */
@@ -339,28 +378,28 @@ export function gradientAt(x, z, out = { gx: 0, gz: 0 }) {
 }
 
 // ---------------------------------------------------------------- palette
-// High-key and low-saturation, echoing the reference's sunlit snow: the value
-// range is narrow and light, and colour does the work instead of contrast.
-const C = {
+// High-key and low-saturation: the value range is narrow and light, and colour
+// does the work instead of contrast.
+export const SURFACE_COLORS = {
   rough:    [0x7e, 0xba, 0x64],
   roughAlt: [0x6c, 0xa9, 0x52],
-  roughDry: [0x9c, 0xc0, 0x66], // sun-bleached patches
-  roughWet: [0x54, 0x92, 0x46], // lusher hollows
+  roughDry: [0x9c, 0xc0, 0x66],
+  roughWet: [0x54, 0x92, 0x46],
   deep:     [0x5e, 0x98, 0x4a],
   fairA:    [0x9a, 0xd6, 0x7b],
   fairB:    [0xa8, 0xe0, 0x89],
   collar:   [0x9e, 0xdb, 0x7f],
   greenA:   [0xb3, 0xe9, 0x96],
-  greenB:   [0xbe, 0xf0, 0xa2],
-  sand:     [0xf7, 0xeb, 0xd2],
-  sandDark: [0xec, 0xdd, 0xbe],
+  sand:     [0xfa, 0xf3, 0xe2],
+  sandDark: [0xf0, 0xe6, 0xcf],
   water:    [0x3f, 0x8d, 0xa6],
   waterEdge:[0x92, 0xd6, 0xdd],
   path:     [0xe4, 0xdd, 0xcf],
-  pathAlt:  [0xd6, 0xce, 0xbe], // aggregate speckle
-  pathWear: [0xc6, 0xbd, 0xac], // tyre tracks
-  pathEdge: [0xb4, 0xae, 0x9a], // weathered edge
+  pathAlt:  [0xd6, 0xce, 0xbe],
+  pathWear: [0xc6, 0xbd, 0xac],
+  pathEdge: [0xb4, 0xae, 0x9a],
 };
+const C = SURFACE_COLORS;
 
 function mix(a, b, t, out) {
   out[0] = a[0] + (b[0] - a[0]) * t;
@@ -369,9 +408,12 @@ function mix(a, b, t, out) {
 }
 
 /**
- * Bakes the whole course into one top-down canvas: rough, mowing stripes,
- * green, bunkers, cart path, shoreline. Painted rather than tiled, so every
- * transition is a soft smoothstep — no hard edges anywhere.
+ * Bakes the hole into one top-down canvas: rough, mowing stripes, green,
+ * bunkers, cart path, shoreline.
+ *
+ * Boundaries between surfaces are baked as hard as a texel allows and then
+ * re-sharpened per-pixel in the terrain shader, which is the only way to get a
+ * mowing line that still looks like a line when you're standing on it.
  */
 export function makeCourseTexture(size = 1024) {
   const cv = document.createElement('canvas');
@@ -397,9 +439,6 @@ export function makeCourseTexture(size = 1024) {
       nearest(x, z, n);
 
       // --- base: rough, in layered patches ---
-      // Three octaves of drift, plus two independent fields that push whole
-      // areas dry or lush. This is the texture that survives into the
-      // distance, once the shader's per-pixel grain has faded out.
       const mott = clamp(0.5 + 0.5 * (
         fbm2(x * 0.021, z * 0.019) * 0.46 +
         fbm2(x * 0.062 + 3.1, z * 0.058 - 1.4) * 0.33 +
@@ -415,76 +454,55 @@ export function makeCourseTexture(size = 1024) {
       const deepen = smoothstep(50, 95, n.dist);
       mix(col, C.deep, deepen * 0.75, col);
 
-      // --- fairway, mown in passes running *down* the line of play ---
-      // Keyed on perpendicular distance, so the bands run away from the tee
-      // and curve with the dogleg — the corduroy in the reference. The fine
-      // grooves on top of these are drawn per-pixel in the terrain shader.
-      // Tight transition: a mowing line is a line, not a gradient. This is as
-      // sharp as ~0.76 yards per texel can go; the terrain shader draws the
-      // actual crisp seam on top, per-pixel.
+      // --- fairway, mown in passes running down the line of play ---
       const hw = fairwayHalfWidth(n.t);
-      const fairMask = 1 - smoothstep(hw - 0.7, hw + 0.7, n.dist);
+      const fairMask = 1 - smoothstep(hw - 0.4, hw + 0.4, n.dist);
       if (fairMask > 0.001) {
         const band = Math.sin((n.perp / MOW_PERIOD) * Math.PI * 2);
         const stripe = smoothstep(-0.6, 0.6, band);
         mix(C.fairA, C.fairB, stripe, tmp);
-        // A touch of the same mottle keeps it organic.
         tmp[0] += (mott - 0.5) * 4; tmp[1] += (mott - 0.5) * 5; tmp[2] += (mott - 0.5) * 3;
         mix(col, tmp, fairMask, col);
       }
 
-      // --- putting surface: collar ring, then a clean unstriped green ---
-      // Deliberately no mowing lines here. A green is cut far shorter and in
-      // its own pattern, so running the fairway stripes straight across it
-      // makes the two surfaces look like one. Leaving it plain is what reads
-      // as "this is the green".
-      // A real fringe: a distinct ring cut between putting surface and
-      // approach, with its own crisp edges on both sides.
-      const gd = distToGreen(x, z);
-      const collar = smoothstep(GREEN.r - 0.6, GREEN.r + 0.6, gd) *
-                     (1 - smoothstep(GREEN.r + 2.4, GREEN.r + 3.4, gd));
+      // --- putting surface: a fringe ring, then a clean unstriped green ---
+      const ge = greenEdge(x, z);
+      const collar = (1 - smoothstep(-0.4, 0.4, ge)) * smoothstep(-3.4, -2.4, ge);
       if (collar > 0.001) mix(col, C.collar, collar * 0.95, col);
-      const gMask = 1 - smoothstep(GREEN.r - 0.7, GREEN.r + 0.7, gd);
-      if (gMask > 0.001) {
-        // Flat colour, full stop — no stripes, no mottle, no grain. The green
-        // is the shortest, most uniform cut on the course, and leaving it
-        // completely clean is what makes it read that way against the
-        // patchy rough and the striped fairway around it.
-        mix(col, C.greenA, gMask, col);
-      }
+      const gMask = smoothstep(-0.4, 0.4, ge);
+      if (gMask > 0.001) mix(col, C.greenA, gMask, col);
 
       // --- cart path: concrete, offset to the right of play ---
       const pathMask = cartPathAt(x, z, n);
       if (pathMask > 0.001) {
         const pd = Math.abs(n.dist - CART_PATH.offset);
-        // Aggregate speckle in the concrete.
         const agg = 0.5 + 0.5 * fbm2(x * 0.62 + 21.4, z * 0.59 - 13.7);
         mix(C.path, C.pathAlt, agg, tmp);
-        // Two faint darker bands where the buggies actually run.
         const wear = Math.exp(-Math.pow((pd - 1.45) / 0.62, 2));
         mix(tmp, C.pathWear, wear * 0.45, tmp);
-        // Weathered edges, dirtier where the turf creeps in.
         const kerb = smoothstep(CART_PATH.halfWidth - 1.1, CART_PATH.halfWidth - 0.2, pd);
         mix(tmp, C.pathEdge, kerb * 0.75, tmp);
         mix(col, tmp, pathMask, col);
       }
 
-      // --- bunkers: damp sand at the rim, bright sand in the middle ---
+      // --- bunkers: bright sand, damp at the rim ---
       const bf = bunkerField(x, z);
-      if (bf < 1.25) {
-        const m = 1 - smoothstep(0.94, 1.1, bf);
+      if (bf < 1.15) {
+        const m = 1 - smoothstep(0.97, 1.03, bf);
         mix(C.sandDark, C.sand, 1 - smoothstep(0.35, 0.95, bf), tmp);
-        tmp[0] += (mott - 0.5) * 8; tmp[1] += (mott - 0.5) * 7; tmp[2] += (mott - 0.5) * 6;
+        tmp[0] += (mott - 0.5) * 6; tmp[1] += (mott - 0.5) * 5; tmp[2] += (mott - 0.5) * 4;
         mix(col, tmp, m, col);
       }
 
-      // --- pond: shoreline sand, then the dark bed under the water plane ---
-      const pf = pondField(x, z);
-      if (pf < 1.35) {
-        const shore = (1 - smoothstep(1.02, 1.3, pf)) * smoothstep(0.9, 1.05, pf);
-        mix(col, C.waterEdge, shore * 0.6, col);
-        const bed = 1 - smoothstep(0.88, 1.02, pf);
-        mix(col, C.water, bed, col);
+      // --- pond: shoreline, then the dark bed under the water plane ---
+      if (POND) {
+        const pf = pondField(x, z);
+        if (pf < 1.35) {
+          const shore = (1 - smoothstep(1.02, 1.3, pf)) * smoothstep(0.9, 1.05, pf);
+          mix(col, C.waterEdge, shore * 0.6, col);
+          const bed = 1 - smoothstep(0.94, 1.02, pf);
+          mix(col, C.water, bed, col);
+        }
       }
 
       const o = (py * size + px) * 4;
@@ -496,13 +514,5 @@ export function makeCourseTexture(size = 1024) {
   return cv;
 }
 
-/** Convert a world XZ position into the baked texture's UV space. */
-export function worldToUV(x, z) {
-  const half = WORLD_SIZE / 2;
-  return {
-    u: (x - (WORLD_CX - half)) / WORLD_SIZE,
-    v: 1 - (z - (WORLD_CZ - half)) / WORLD_SIZE,
-  };
-}
-
-export { BUNKERS, POND };
+// Load the first hole so importers have valid state immediately.
+setHole(HOLES[0]);

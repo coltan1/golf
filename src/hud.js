@@ -12,6 +12,9 @@ const $ = (id) => document.getElementById(id);
 export class Hud {
   constructor() {
     this.el = {
+      holeNo: $('holeNo'),
+      holeName: $('holeName'),
+      holePar: $('holePar'),
       holeYds: $('holeYds'),
       strokes: $('strokes'),
       hint: $('hint'),
@@ -36,7 +39,13 @@ export class Hud {
     setTimeout(() => { this.el.loader.style.display = 'none'; }, 950);
   }
 
-  setHoleLength(yards) { this.el.holeYds.textContent = `${Math.round(yards)} yds`; }
+  /** Hole number, name, par and measured length. */
+  setHole(number, name, par, yards) {
+    this.el.holeNo.textContent = `Hole ${number}`;
+    this.el.holeName.textContent = name;
+    this.el.holePar.textContent = `Par ${par}`;
+    this.el.holeYds.textContent = `${Math.round(yards)} yds`;
+  }
 
   setStatus(stroke, club, toPin) {
     const bits = [`Stroke ${stroke}`];
@@ -85,9 +94,10 @@ export class Hud {
     if (on && text) this.el.freecam.textContent = text;
   }
 
-  card(title, sub) {
+  card(title, sub, buttonLabel) {
     this.el.cardTitle.textContent = title;
     this.el.cardSub.textContent = sub;
+    if (buttonLabel) this.el.btnAgain.textContent = buttonLabel;
     this.el.card.classList.add('show');
   }
 
