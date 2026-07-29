@@ -14,7 +14,7 @@
  */
 
 import { CatmullRomCurve3, Vector3 } from 'three';
-import { clamp, lerp, smoothstep, fbm2 } from './util.js';
+import { clamp, lerp, smoothstep, fbm2, mulberry32 } from './util.js';
 import { HOLES } from './holes.js';
 
 // ---------------------------------------------------------------- world box
@@ -97,18 +97,28 @@ export function setHole(def) {
   GREEN = {
     x: g.x, z: g.z, r: gr,
     rx: gr, rz: gr * squash, rot: def.green.angle ?? 0,
+    // Gentle: a green is shaped, but it is still a putting surface.
+    h: outline(def.n * 7717 + 11, 0.13, 0.08, 0.045),
   };
   HOLE_POS = { x: g.x + 1.5, z: g.z - 2 };
 
-  BUNKERS = (def.bunkers ?? []).map((b) => {
+  BUNKERS = (def.bunkers ?? []).map((b, i) => {
     const p = resolve(b.at, b.off);
-    return { x: p.x, z: p.z, rx: b.rx, rz: b.rz, rot: b.rot ?? 0 };
+    // Strong: bunkers are the most irregular thing on a golf course.
+    return {
+      x: p.x, z: p.z, rx: b.rx, rz: b.rz, rot: b.rot ?? 0,
+      h: outline(def.n * 9931 + i * 197 + 3, 0.22, 0.15, 0.09),
+    };
   });
 
   POND = null;
   if (def.water) {
     const p = resolve(def.water.at, def.water.off);
-    POND = { x: p.x, z: p.z, rx: def.water.rx, rz: def.water.rz, rot: def.water.rot ?? 0 };
+    POND = {
+      x: p.x, z: p.z, rx: def.water.rx, rz: def.water.rz, rot: def.water.rot ?? 0,
+      // Enough to give the bank a bay or two rather than a drawn oval.
+      h: outline(def.n * 6151 + 29, 0.19, 0.12, 0.07),
+    };
   }
 
   MOUNDS = (def.mounds ?? []).map((m) => {
@@ -243,22 +253,56 @@ export function fairwayHalfWidth(t) {
   return base + 2.6 * Math.sin(t * 14.0 + 1.3) + 1.7 * Math.sin(t * 31.0 - 0.7);
 }
 
-/** Normalised distance inside an ellipse (1.0 = on the edge). */
-function ellipseField(x, z, e) {
+/**
+ * Normalised distance inside a feature outline — 1.0 is exactly on the edge.
+ *
+ * Not an ellipse. The radius is modulated by three angular harmonics, which
+ * makes an irregular, lobed outline that is still a closed curve *by
+ * construction* — it cannot self-intersect, pinch off or leave a gap the way a
+ * hand-drawn polygon or a noise-displaced boundary can. Greens get gentle
+ * lobes, bunkers get the deep scalloping real ones have, water gets a bay or
+ * two. Every consumer of this — surface classification, the terrain sculpt,
+ * the baked texture, the shader's per-pixel edges — follows the new outline
+ * without knowing anything changed.
+ *
+ * The early-outs matter: this runs for every bunker at every one of a million
+ * texture pixels, and three sines plus an atan2 is not free. Far outside or
+ * deep inside a shape the wobble cannot change any decision made from the
+ * result, so the plain radius is returned instead.
+ */
+function shapeField(x, z, e) {
   const c = Math.cos(e.rot || 0), s = Math.sin(e.rot || 0);
   const dx = x - e.x, dz = z - e.z;
   const u = (dx * c + dz * s) / e.rx;
   const v = (-dx * s + dz * c) / e.rz;
-  return Math.sqrt(u * u + v * v);
+  const r = Math.sqrt(u * u + v * v);
+  const h = e.h;
+  if (!h || r > 1.9 || r < 0.25) return r;
+
+  const a = Math.atan2(v, u);
+  const k = 1 + h[0] * Math.sin(a * 2 + h[1])
+              + h[2] * Math.sin(a * 3 + h[3])
+              + h[4] * Math.sin(a * 5 + h[5]);
+  return r / k;
+}
+
+/** Deterministic harmonic weights and phases for one feature outline. */
+function outline(seed, a1, a2, a3) {
+  const r = mulberry32(seed);
+  return [
+    lerp(0.55, 1, r()) * a1, r() * Math.PI * 2,
+    lerp(0.55, 1, r()) * a2, r() * Math.PI * 2,
+    lerp(0.55, 1, r()) * a3, r() * Math.PI * 2,
+  ];
 }
 
 export function bunkerField(x, z) {
   let m = Infinity;
-  for (let i = 0; i < BUNKERS.length; i++) m = Math.min(m, ellipseField(x, z, BUNKERS[i]));
+  for (let i = 0; i < BUNKERS.length; i++) m = Math.min(m, shapeField(x, z, BUNKERS[i]));
   return m;
 }
-export function pondField(x, z) { return POND ? ellipseField(x, z, POND) : Infinity; }
-export function greenField(x, z) { return ellipseField(x, z, GREEN); }
+export function pondField(x, z) { return POND ? shapeField(x, z, POND) : Infinity; }
+export function greenField(x, z) { return shapeField(x, z, GREEN); }
 
 /**
  * Signed yards inside the nearest bunker — positive on the sand. The fairway
@@ -269,7 +313,7 @@ export function bunkerEdge(x, z) {
   let best = -999;
   for (let i = 0; i < BUNKERS.length; i++) {
     const b = BUNKERS[i];
-    const e = (1 - ellipseField(x, z, b)) * ((b.rx + b.rz) * 0.5);
+    const e = (1 - shapeField(x, z, b)) * ((b.rx + b.rz) * 0.5);
     if (e > best) best = e;
   }
   return best;
@@ -369,7 +413,7 @@ export function heightAt(x, z) {
   // patch painted on the grass rather than as a hazard you have to climb out
   // of. The wall lands across two or three quads, which the mesh can hold.
   for (let i = 0; i < BUNKERS.length; i++) {
-    const f = ellipseField(x, z, BUNKERS[i]);
+    const f = shapeField(x, z, BUNKERS[i]);
     if (f < 1.55) {
       const bowl = 1 - smoothstep(0.55, 1.0, f);
       const lip = smoothstep(0.94, 1.14, f) * (1 - smoothstep(1.14, 1.55, f));

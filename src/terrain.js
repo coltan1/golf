@@ -355,15 +355,22 @@ export function createTerrain(renderer, toonRamp) {
  * per-frame vertex work and no normal recomputation at all.
  */
 export function createWater() {
-  const SEG = 64;
-  // The plane overhangs the pond; the shader discards everything outside the
-  // ellipse, so the waterline is the true shore rather than a square edge.
-  const geo = new THREE.PlaneGeometry(POND.rx * 2.15, POND.rz * 2.15, SEG, SEG);
+  const SEG = 72;
+  // The plane overhangs the pond and the shader discards everything outside
+  // the outline, so the waterline is the true shore rather than a square edge.
+  // It has to overhang generously: the harmonics push the bank out to about
+  // 1.4x the nominal radius at its furthest, and a plane sized for the plain
+  // ellipse would slice the bays clean off.
+  const geo = new THREE.PlaneGeometry(POND.rx * 3.0, POND.rz * 3.0, SEG, SEG);
   geo.rotateX(-Math.PI / 2);
 
   const uniforms = {
     uTime: { value: 0 },
     uRadii: { value: new THREE.Vector2(POND.rx, POND.rz) },
+    // Same three harmonics course.js uses, so the rendered waterline and the
+    // basin carved into the terrain are the same curve.
+    uWobA: { value: new THREE.Vector3(POND.h[0], POND.h[2], POND.h[4]) },
+    uWobP: { value: new THREE.Vector3(POND.h[1], POND.h[3], POND.h[5]) },
     uDeep: { value: new THREE.Color(0x1c6b86) },
     uShallow: { value: new THREE.Color(0x63cbd8) },
     uCrest: { value: new THREE.Color(0xd6f4fa) },
@@ -379,12 +386,20 @@ export function createWater() {
       .replace('#include <common>', `#include <common>
         uniform float uTime;
         uniform vec2 uRadii;
+        uniform vec3 uWobA;
+        uniform vec3 uWobP;
         varying vec2 vLocal;
         varying float vField;`)
       .replace('#include <begin_vertex>', `#include <begin_vertex>
         vLocal = vec2(position.x, position.z);
-        // 1.0 is exactly the shoreline.
-        vField = length(vLocal / uRadii);
+        // 1.0 is exactly the shoreline. Matches shapeField() in course.js.
+        vec2 e = vLocal / uRadii;
+        float rr = length(e);
+        float aa = atan(e.y, e.x);
+        float kk = 1.0 + uWobA.x * sin(aa * 2.0 + uWobP.x)
+                       + uWobA.y * sin(aa * 3.0 + uWobP.y)
+                       + uWobA.z * sin(aa * 5.0 + uWobP.z);
+        vField = rr / kk;
         transformed.y +=
           0.16 * sin(position.x * 0.13 + uTime * 0.55) +
           0.11 * sin(position.z * 0.17 - uTime * 0.42) +
