@@ -767,57 +767,66 @@ export function createBridge(ramp) {
   const g = new THREE.Group();
   g.name = 'bridge';
   g.position.set(best.x, CREEK.y, best.z);
-  // Local +X points across the creek.
+  // Local +X points across the creek, local origin sits at the waterline.
   g.rotation.y = Math.atan2(-best.nz, best.nx);
 
-  const stone = toon(0xb9b2a4, ramp);
-  const stoneDark = toon(0x9c958a, ramp);
+  const stone = toon(0xbdb6a8, ramp);
+  const stoneDark = toon(0x9a9388, ramp);
 
-  const span = CREEK.w * 2 + 7;      // reaches onto dry bank at both ends
-  const deckW = 4.2;                 // how wide the crossing is
-  const deckY = 2.5;                 // deck height above the waterline
-  const piers = [-span * 0.5, 0, span * 0.5];
-  const pierW = { end: 2.6, mid: 1.6 };
+  // Everything measures off these, rather than off each other. Chaining
+  // offsets is how the parapets ended up floating and the abutments ended up
+  // hanging past the end of the deck.
+  const span = CREEK.w * 2 + 6;    // pier centre to pier centre, outermost
+  const deckW = 4.0;               // width of the crossing
+  const deckTop = 2.4;             // roadway surface, above the waterline
+  const deckThick = 0.38;
+  const pierTop = deckTop - deckThick;
+  const endW = 2.4, midW = 1.5;    // pier widths
 
-  const box = (w, h, d, x, y, z, mat) => {
+  const box = (w, h, d, cx, cy, cz, mat) => {
     const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), mat);
-    m.position.set(x, y, z);
+    m.position.set(cx, cy, cz);
     m.castShadow = m.receiveShadow = true;
     g.add(m);
     return m;
   };
 
-  // Abutments at each end and a pier in the middle.
-  for (const px of piers) {
-    box(px === 0 ? pierW.mid : pierW.end, deckY, deckW, px, deckY / 2 - 0.6, 0, stoneDark);
+  // Piers, from the bed up to the underside of the deck.
+  for (const [px, pw] of [[-span / 2, endW], [0, midW], [span / 2, endW]]) {
+    box(pw, pierTop + 1.2, deckW, px, (pierTop - 1.2) / 2, 0, stoneDark);
   }
 
   // Two arch rings of voussoirs.
   //
-  // Segmental, not semicircular. A semicircle over an opening this wide would
-  // rise higher than the deck and the blocks would burst through the roadway;
-  // the crown has to tuck just under it, so the ring is an ellipse — wide span,
-  // shallow rise — with each block laid along the local tangent.
-  const halfOpen = (span * 0.5 - pierW.end / 2 - pierW.mid / 2) / 2;
-  const openings = [-(halfOpen + pierW.mid / 2), halfOpen + pierW.mid / 2];
-  const spring = 0.35;
-  const rise = deckY - 0.75 - spring;
-
-  for (const cx of openings) {
+  // Segmental, not semicircular: over an opening this wide a semicircle rises
+  // higher than the roadway and the blocks burst up through it. Wide span,
+  // shallow rise, crown tucked just under the deck, each block laid along the
+  // local tangent of the ellipse.
+  const halfOpen = (span - endW - midW) / 4;
+  const spring = 0.3;
+  const rise = pierTop - 0.15 - spring;
+  for (const cx of [-(halfOpen + midW / 2), halfOpen + midW / 2]) {
     const BLOCKS = 13;
     for (let i = 0; i < BLOCKS; i++) {
-      const a = Math.PI * (i + 0.5) / BLOCKS;   // 0..π across the opening
-      const bx = cx + Math.cos(a) * halfOpen;
-      const by = spring + Math.sin(a) * rise;
-      const blk = box(halfOpen * 0.30, 0.42, deckW + 0.2, bx, by, 0, stone);
+      const a = Math.PI * (i + 0.5) / BLOCKS;
+      const blk = box(
+        halfOpen * 0.30, 0.40, deckW + 0.18,
+        cx + Math.cos(a) * halfOpen, spring + Math.sin(a) * rise, 0, stone
+      );
       blk.rotation.z = Math.atan2(rise * Math.cos(a), -halfOpen * Math.sin(a));
     }
   }
 
-  // Deck, then a low parapet down each side.
-  box(span + 1.0, 0.45, deckW + 0.5, 0, deckY - 0.1, 0, stone);
-  for (const s of [-1, 1]) {
-    box(span + 1.0, 0.7, 0.4, 0, deckY + 0.45, s * (deckW / 2 + 0.16), stoneDark);
+  // Deck: long enough to cover the outer face of both end piers and land on
+  // the bank, with a slight overhang.
+  const deckLen = span + endW + 2.4;
+  box(deckLen, deckThick, deckW + 0.6, 0, deckTop - deckThick / 2, 0, stone);
+
+  // Parapets sitting *on* the deck, inset from its edge.
+  const parapetH = 0.7, parapetT = 0.34;
+  for (const sgn of [-1, 1]) {
+    box(deckLen, parapetH, parapetT,
+        0, deckTop + parapetH / 2, sgn * (deckW / 2 + 0.13), stoneDark);
   }
 
   return g;
