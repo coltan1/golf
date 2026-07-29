@@ -13,7 +13,7 @@ import {
   heightAt, surfaceAt, distToHole, aimPointAhead,
   HOLE_POS, TEE, PAR, HOLE_LENGTH, HOLE, setHole, POND,
 } from './course.js';
-import { createTerrain, createWater, makeToonRamp } from './terrain.js';
+import { createTerrain, createWater, makeToonRamp, makeGroundRamp } from './terrain.js';
 import { createSky, createLights, createClouds, createBackdrop, FOG_COLOR } from './scenery.js';
 import { createTrees, createClubhouse, createFlag, createTeeMarkers } from './props.js';
 import { Golfer } from './golfer.js';
@@ -76,6 +76,7 @@ function disposeWorld() {
 
 function buildWorld() {
   const ramp = makeToonRamp();
+  const groundRamp = makeGroundRamp();
   worldGroup = new THREE.Group();
   worldGroup.name = 'world';
   scene.add(worldGroup);
@@ -86,7 +87,7 @@ function buildWorld() {
   add(createBackdrop(ramp));
   clouds = add(createClouds());
 
-  terrain = add(createTerrain(renderer, ramp));
+  terrain = add(createTerrain(renderer, groundRamp));
 
   // Most holes have no water at all; createWater() reads the pond dimensions,
   // so it must not be called when there isn't one.

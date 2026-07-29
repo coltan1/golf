@@ -64,7 +64,7 @@ function makePineGeo() {
   // 24 segments with 6 lobes gives exactly 4 samples per scallop — any
   // frequency that divides the segment count lands on the zero crossings and
   // the scallop silently disappears.
-  const SEGS = 32, LOBES = 6;
+  const SEGS = 20, LOBES = 5;
   const geo = new THREE.LatheGeometry(profile, SEGS);
   const p = geo.attributes.position;
   for (let i = 0; i < p.count; i++) {
@@ -85,9 +85,10 @@ function makePineGeo() {
 /** Is this a legal, sensible spot for a tree? */
 function plantable(x, z) {
   const n = nearest(x, z);
-  // Keep a generous mown apron either side — this is a golf hole, not a wood.
-  if (n.dist < fairwayHalfWidth(n.t) + 20) return false;
-  if (Math.hypot(x - GREEN.x, z - GREEN.z) < GREEN.r + 17) return false;
+  // Only a narrow strip of second cut before the treeline starts. The holes
+  // are corridors cut through forest, not clearings in a park.
+  if (n.dist < fairwayHalfWidth(n.t) + 11) return false;
+  if (Math.hypot(x - GREEN.x, z - GREEN.z) < GREEN.r + 13) return false;
   if (Math.hypot(x - TEE.x, z - TEE.z) < 26) return false;
   if (bunkerField(x, z) < 1.7) return false;
   if (pondField(x, z) < 1.3) return false;
@@ -110,13 +111,13 @@ export function createTrees(toonRamp) {
     const y = heightAt(x, z);
     if (y < -0.5) return; // never standing in the pond bed
 
-    if (rnd() < 0.62) {
-      const s = lerp(0.72, 1.25, rnd()) * sizeScale;
+    if (rnd() < 0.78) {
+      const s = lerp(1.7, 2.9, rnd()) * sizeScale;
       pines.push({ x, y: y - 0.2, z, s, rot: rnd() * Math.PI * 2, v: rnd() });
       return;
     }
 
-    const s = lerp(0.85, 1.35, rnd()) * sizeScale;
+    const s = lerp(1.4, 2.2, rnd()) * sizeScale;
     trunks.push({ x, y, z, s, rot: rnd() * Math.PI * 2 });
     // 2–3 overlapping blobs make a soft, full canopy.
     const n = rnd() < 0.55 ? 3 : 2;
@@ -140,24 +141,26 @@ export function createTrees(toonRamp) {
 
   // Pass A — sparse specimen trees framing the corridor. Offsets are measured
   // from the centreline, so the tree line curves with the dogleg.
-  for (let i = 0; i < 190; i++) {
+  for (let i = 0; i < 1100; i++) {
     const z = lerp(zNear, zFar, rnd());
     const side = rnd() < 0.5 ? 1 : -1;
-    const off = lerp(34, 92, Math.pow(rnd(), 0.6));
-    plant(centreXAt(z) + side * off + lerp(-6, 6, rnd()), z + lerp(-8, 8, rnd()), 1);
+    // Biased hard toward the corridor edge, so the treeline is a wall rather
+    // than a scattering that thins out as it approaches the fairway.
+    const off = lerp(16, 95, Math.pow(rnd(), 1.8));
+    plant(centreXAt(z) + side * off + lerp(-7, 7, rnd()), z + lerp(-9, 9, rnd()), 1);
   }
 
   // Pass B — the treeline proper, further out, quietly closing the world off.
-  for (let i = 0; i < 380; i++) {
-    const z = lerp(zNear + 40, zFar - 30, rnd());
+  for (let i = 0; i < 1500; i++) {
+    const z = lerp(zNear + 30, zFar - 20, rnd());
     const side = rnd() < 0.5 ? 1 : -1;
-    plant(centreXAt(z) + side * lerp(105, 200, rnd()), z, lerp(0.9, 1.3, rnd()));
+    plant(centreXAt(z) + side * lerp(85, 260, rnd()), z, lerp(0.9, 1.3, rnd()));
   }
 
   // Pass C — a scattered far forest that melts into the fog.
-  for (let i = 0; i < 380; i++) {
+  for (let i = 0; i < 1100; i++) {
     const a = rnd() * Math.PI * 2;
-    const r = lerp(WORLD_SIZE * 0.24, WORLD_SIZE * 0.40, rnd());
+    const r = lerp(WORLD_SIZE * 0.20, WORLD_SIZE * 0.50, rnd());
     plant(WORLD_CX + Math.sin(a) * r, WORLD_CZ + Math.cos(a) * r, lerp(1.0, 1.5, rnd()));
   }
 

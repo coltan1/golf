@@ -81,7 +81,9 @@ export function createLights(scene) {
   sun.shadow.camera.bottom = -s;
   sun.shadow.bias = -0.0006;
   sun.shadow.normalBias = 0.8;
-  sun.shadow.radius = 4;
+  // Tight: a soft shadow edge next to a hard cel band looks like two
+  // different renderers arguing.
+  sun.shadow.radius = 1.2;
   scene.add(sun);
   scene.add(sun.target);
 

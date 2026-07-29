@@ -77,6 +77,42 @@ function colorUniform(rgb) {
   return new THREE.Color().setRGB(rgb[0] / 255, rgb[1] / 255, rgb[2] / 255, THREE.SRGBColorSpace);
 }
 
+/**
+ * A separate ramp for the ground.
+ *
+ * Sharing the prop ramp is what made the turf look wrong. Open ground sits at
+ * dotNL ≈ 0.71 under a 45° sun, which lands almost exactly on a step, so a
+ * slope of six degrees — less undulation than any real fairway has — tips a
+ * patch into the next band. The result is bands wandering across the fairway
+ * as soft blotches that read as a rendering fault.
+ *
+ * So this ramp holds *one* value across everything roughly sun-facing. Flat
+ * turf and gently rolling turf then shade identically, while genuinely steep
+ * ground — bunker faces, mounding, the shoulders of a green — still drops a
+ * band and keeps its shape. The terminator stays hard, so it is still cel.
+ */
+export function makeGroundRamp() {
+  const steps = [
+    0.20, 0.20, 0.20, 0.20, 0.20, 0.20, 0.20, 0.20, // facing away
+    0.46, 0.46, 0.46,                               // steep, turned away
+    0.72, 0.72,                                     // moderately tilted
+    1.00, 1.00, 1.00,                               // anything roughly sunward
+  ];
+  const cv = document.createElement('canvas');
+  cv.width = steps.length; cv.height = 1;
+  const ctx = cv.getContext('2d');
+  steps.forEach((v, i) => {
+    const c = Math.round(v * 255);
+    ctx.fillStyle = `rgb(${c},${c},${c})`;
+    ctx.fillRect(i, 0, 1, 1);
+  });
+  const tex = new THREE.CanvasTexture(cv);
+  tex.minFilter = tex.magFilter = THREE.NearestFilter;
+  tex.generateMipmaps = false;
+  tex.colorSpace = THREE.SRGBColorSpace;
+  return tex;
+}
+
 export function createTerrain(renderer, toonRamp) {
   // ~2.4 yards per quad, whatever the hole's extent. Fine enough that no
   // triangle reads as a triangle, and that a bunker bowl gets eight or ten
