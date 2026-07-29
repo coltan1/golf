@@ -242,6 +242,21 @@ export function bunkerField(x, z) {
 export function pondField(x, z) { return POND ? ellipseField(x, z, POND) : Infinity; }
 export function greenField(x, z) { return ellipseField(x, z, GREEN); }
 
+/**
+ * Signed yards inside the nearest bunker — positive on the sand. The fairway
+ * and green get their edges sharpened per-pixel; without this the sand does
+ * not, and a bunker smears into a pale stain the moment you stand near one.
+ */
+export function bunkerEdge(x, z) {
+  let best = -999;
+  for (let i = 0; i < BUNKERS.length; i++) {
+    const b = BUNKERS[i];
+    const e = (1 - ellipseField(x, z, b)) * ((b.rx + b.rz) * 0.5);
+    if (e > best) best = e;
+  }
+  return best;
+}
+
 /** Signed yards inside the green — positive on the putting surface. */
 export function greenEdge(x, z) {
   return (1 - greenField(x, z)) * ((GREEN.rx + GREEN.rz) * 0.5);
@@ -318,14 +333,17 @@ export function heightAt(x, z) {
     }
   }
 
-  // Bunkers: scooped bowl, gentle raised lip just outside the sand.
+  // Bunkers are dug, not dished. A flat sand floor out to about half the
+  // radius, then a steep face up to the lip — a smooth saucer reads as a pale
+  // patch painted on the grass rather than as a hazard you have to climb out
+  // of. The wall lands across two or three quads, which the mesh can hold.
   for (let i = 0; i < BUNKERS.length; i++) {
     const f = ellipseField(x, z, BUNKERS[i]);
     if (f < 1.55) {
-      const bowl = 1 - smoothstep(0.0, 1.0, f);
-      const lip = smoothstep(0.92, 1.12, f) * (1 - smoothstep(1.12, 1.55, f));
-      h -= 1.75 * bowl;
-      h += 0.55 * lip;
+      const bowl = 1 - smoothstep(0.55, 1.0, f);
+      const lip = smoothstep(0.94, 1.14, f) * (1 - smoothstep(1.14, 1.55, f));
+      h -= 2.3 * bowl;
+      h += 0.70 * lip;
     }
   }
 
@@ -348,21 +366,12 @@ export function heightAt(x, z) {
   );
   const path = cartPathAt(x, z, n);
   const unmown = (1 - mownTight) * (1 - path);
-  // Two octaves. The broad one gives the rough its rolling shape; the second
-  // works at roughly facet scale, and it is what makes the low-poly shading
-  // legible — flat facets only read as facets when neighbouring triangles
-  // actually differ in slope. Kept above ~18 yards so the mesh can resolve it.
+  // Rolling relief in the rough only. Mown ground stays smooth: a cel ramp
+  // turns every gentle undulation into a wandering band edge, and on a fairway
+  // that reads as a shading fault rather than as ground.
   if (unmown > 0.001) {
-    h += unmown * (
-      1.6 * fbm2(x * 0.040 + 11.3, z * 0.038 - 7.1) +
-      1.1 * fbm2(x * 0.056 - 4.9, z * 0.054 + 8.3)
-    );
+    h += unmown * 1.5 * fbm2(x * 0.040 + 11.3, z * 0.038 - 7.1);
   }
-
-  // A whisper of the same everywhere except the putting surface. Far too small
-  // to affect a roll, but enough that facets near a band edge tip across it,
-  // which is what stops mown ground reading as one flat sheet of colour.
-  h += 0.30 * (1 - gb) * fbm2(x * 0.062 + 3.7, z * 0.060 - 5.1);
 
   // Grass height is real height. Rough is left long and the fairway and green
   // are cut short, so every mowing line has an actual lip at it — that step
@@ -411,8 +420,8 @@ export const SURFACE_COLORS = {
   fairB:    [0xa8, 0xe0, 0x89],
   collar:   [0x9e, 0xdb, 0x7f],
   greenA:   [0xb3, 0xe9, 0x96],
-  sand:     [0xfa, 0xf3, 0xe2],
-  sandDark: [0xf0, 0xe6, 0xcf],
+  sand:     [0xf9, 0xee, 0xd2],
+  sandDark: [0xe9, 0xd9, 0xb4],
   water:    [0x3f, 0x8d, 0xa6],
   waterEdge:[0x92, 0xd6, 0xdd],
   path:     [0xe4, 0xdd, 0xcf],
@@ -468,9 +477,9 @@ export function makeCourseTexture(size = 1024) {
       mix(C.rough, C.roughAlt, mott, col);
 
       const dry = 0.5 + 0.5 * fbm2(x * 0.034 - 5.2, z * 0.037 + 4.4);
-      mix(col, C.roughDry, smoothstep(0.46, 0.92, dry) * 0.34, col);
+      mix(col, C.roughDry, smoothstep(0.44, 0.90, dry) * 0.58, col);
       const wet = 0.5 + 0.5 * fbm2(x * 0.048 + 9.6, z * 0.044 - 6.8);
-      mix(col, C.roughWet, smoothstep(0.50, 0.96, wet) * 0.30, col);
+      mix(col, C.roughWet, smoothstep(0.48, 0.94, wet) * 0.52, col);
 
       const deepen = smoothstep(50, 95, n.dist);
       mix(col, C.deep, deepen * 0.75, col);

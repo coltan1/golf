@@ -16,8 +16,9 @@ import * as THREE from 'three';
 import {
   WORLD_SIZE, WORLD_CX, WORLD_CZ, WATER_Y, POND, MOW_PERIOD, CART_PATH,
   SURFACE_COLORS, heightAt, makeCourseTexture, nearest, fairwayHalfWidth, greenEdge,
+  bunkerEdge,
 } from './course.js';
-import { smoothstep, hash3 } from './util.js';
+import { smoothstep } from './util.js';
 
 /**
  * The cel ramp — the single most important thing about the look.
@@ -67,6 +68,7 @@ export function makeToonRamp() {
 function surfaceEdges(x, z, n, out) {
   out.fair = fairwayHalfWidth(n.t) - n.dist;
   out.green = greenEdge(x, z);
+  out.sand = bunkerEdge(x, z);
   return out;
 }
 
@@ -76,11 +78,10 @@ function colorUniform(rgb) {
 }
 
 export function createTerrain(renderer, toonRamp) {
-  // Sized for a roughly constant facet whatever the hole's extent. ~6.5 yards
-  // per quad reads as deliberate low-poly up close; much coarser and the
-  // bunker bowls and green pads stop resolving, since those are only a handful
-  // of quads across as it is.
-  const SEG = Math.round(WORLD_SIZE / 6.5);
+  // ~2.4 yards per quad, whatever the hole's extent. Fine enough that no
+  // triangle reads as a triangle, and that a bunker bowl gets eight or ten
+  // quads across it instead of three.
+  const SEG = Math.round(WORLD_SIZE / 2.4);
   const half = WORLD_SIZE / 2;
   const x0 = WORLD_CX - half;
   const z0 = WORLD_CZ - half;
@@ -89,10 +90,10 @@ export function createTerrain(renderer, toonRamp) {
   const vertCount = (SEG + 1) * (SEG + 1);
   const positions = new Float32Array(vertCount * 3);
   const uvs = new Float32Array(vertCount * 2);
-  const course = new Float32Array(vertCount * 3);
+  const course = new Float32Array(vertCount * 4);
   const indices = new Uint32Array(SEG * SEG * 6);
 
-  const edges = { fair: 0, green: 0 };
+  const edges = { fair: 0, green: 0, sand: 0 };
   let v = 0, t = 0;
   for (let j = 0; j <= SEG; j++) {
     const z = z0 + j * step;
@@ -108,9 +109,10 @@ export function createTerrain(renderer, toonRamp) {
       // centreline, so it interpolates across these quads without distortion.
       const n = nearest(x, z);
       surfaceEdges(x, z, n, edges);
-      course[v * 3] = n.perp;
-      course[v * 3 + 1] = edges.fair;
-      course[v * 3 + 2] = edges.green;
+      course[v * 4] = n.perp;
+      course[v * 4 + 1] = edges.fair;
+      course[v * 4 + 2] = edges.green;
+      course[v * 4 + 3] = edges.sand;
       v++;
     }
   }
@@ -125,49 +127,19 @@ export function createTerrain(renderer, toonRamp) {
     }
   }
 
-  const indexed = new THREE.BufferGeometry();
-  indexed.setAttribute('position', new THREE.BufferAttribute(positions, 3));
-  indexed.setAttribute('uv', new THREE.BufferAttribute(uvs, 2));
-  indexed.setAttribute('aCourse', new THREE.BufferAttribute(course, 3));
-  indexed.setIndex(new THREE.BufferAttribute(indices, 1));
-
-  // De-index, then compute normals: every triangle gets its own three verts and
-  // therefore one constant normal. This is the whole point — a hard cel ramp
-  // across a *smooth* surface puts its band boundaries wherever the curvature
-  // happens to cross a step, and those boundaries drift about as soft blobs
-  // that read as a shading bug. Flat facets pin every band to a real edge.
-  const geo = indexed.toNonIndexed();
-  indexed.dispose();
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+  geo.setAttribute('uv', new THREE.BufferAttribute(uvs, 2));
+  geo.setAttribute('aCourse', new THREE.BufferAttribute(course, 4));
+  geo.setIndex(new THREE.BufferAttribute(indices, 1));
   geo.computeVertexNormals();
-
-  // Per-facet tint — one constant colour per triangle.
-  //
-  // Flat normals alone are not enough here. A cel ramp *quantises* lighting,
-  // so two neighbouring facets a few degrees apart land in the same band and
-  // render identically; the faceting stays invisible unless the ground is
-  // violently bumpy, which mown turf cannot be. Driving it from colour instead
-  // makes every triangle legible at any slope, and it costs one attribute.
-  const pos = geo.attributes.position;
-  const tint = new Float32Array(pos.count * 3);
-  for (let t = 0; t + 2 < pos.count; t += 3) {
-    const cx = (pos.getX(t) + pos.getX(t + 1) + pos.getX(t + 2)) / 3;
-    const cz = (pos.getZ(t) + pos.getZ(t + 1) + pos.getZ(t + 2)) / 3;
-    const k = 1 + (hash3(Math.round(cx * 8) / 8, 0, Math.round(cz * 8) / 8) - 0.5) * 0.24;
-    for (let i = 0; i < 3; i++) {
-      const o = (t + i) * 3;
-      // Warm the bright facets a touch and cool the dark ones, so the
-      // variation reads as ground rather than as static.
-      tint[o] = k * 1.03; tint[o + 1] = k; tint[o + 2] = k * 0.96;
-    }
-  }
-  geo.setAttribute('color', new THREE.BufferAttribute(tint, 3));
 
   const map = new THREE.CanvasTexture(makeCourseTexture(1024));
   map.colorSpace = THREE.SRGBColorSpace;
   map.anisotropy = Math.min(8, renderer.capabilities.getMaxAnisotropy());
   map.wrapS = map.wrapT = THREE.ClampToEdgeWrapping;
 
-  const mat = new THREE.MeshToonMaterial({ map, gradientMap: toonRamp, vertexColors: true });
+  const mat = new THREE.MeshToonMaterial({ map, gradientMap: toonRamp });
 
   // Everything the baked texture cannot hold: crisp mowing seams, fine
   // grooves, turf grain and cart-path detail — all drawn per-pixel and
@@ -178,11 +150,12 @@ export function createTerrain(renderer, toonRamp) {
     shader.uniforms.uFairB  = { value: colorUniform(SURFACE_COLORS.fairB) };
     shader.uniforms.uCollar = { value: colorUniform(SURFACE_COLORS.collar) };
     shader.uniforms.uGreen  = { value: colorUniform(SURFACE_COLORS.greenA) };
+    shader.uniforms.uSand   = { value: colorUniform(SURFACE_COLORS.sand) };
 
     shader.vertexShader = shader.vertexShader
       .replace('#include <common>', `#include <common>
-        attribute vec3 aCourse;
-        varying vec3 vCourse;
+        attribute vec4 aCourse;
+        varying vec4 vCourse;
         varying vec2 vWorld;`)
       .replace('#include <begin_vertex>', `#include <begin_vertex>
         vCourse = aCourse;
@@ -190,9 +163,10 @@ export function createTerrain(renderer, toonRamp) {
 
     shader.fragmentShader = shader.fragmentShader
       .replace('#include <common>', `#include <common>
-        varying vec3 vCourse;
+        varying vec4 vCourse;
         varying vec2 vWorld;
         uniform vec3 uRough;
+        uniform vec3 uSand;
         uniform vec3 uFairA;
         uniform vec3 uFairB;
         uniform vec3 uCollar;
@@ -264,17 +238,30 @@ export function createTerrain(renderer, toonRamp) {
           diffuseColor.rgb = mix(diffuseColor.rgb, mix(uCollar, uGreen, greenM),
                                  nearG * 0.92 * (1.0 - pathM));
 
+          // Sand last, so it wins wherever a bunker meets anything. Without
+          // this the bake's single-texel edge magnifies into a pale smear and
+          // the bunker stops looking like a bunker at all.
+          float be = vCourse.w;
+          float sandM = smoothstep(-fwidth(be), fwidth(be), be);
+          float nearB = 1.0 - smoothstep(0.5, 2.2, abs(be));
+          diffuseColor.rgb = mix(diffuseColor.rgb,
+                                 mix(mix(uRough, fairCol, fairM), uSand, sandM),
+                                 nearB * 0.94);
+          // A darker rim just inside the sand: bunkers are dug, and the lip
+          // shades the near edge.
+          diffuseColor.rgb *= 1.0 - 0.14 * ccSeam(be, 0.34);
+
           // --- mowing grooves ----------------------------------------------
           float footprint = fwidth(vCourse.x);
           float groove = sin(vCourse.x * (6.2831853 / period));
           float gaa = 1.0 - smoothstep(period * 0.22, period * 0.60, footprint);
-          diffuseColor.rgb *= 1.0 + groove * 0.05 * gaa * fairM * offGreen;
+          diffuseColor.rgb *= 1.0 + groove * 0.05 * gaa * fairM * offGreen * (1.0 - sandM);
 
           // --- the cut lines themselves ------------------------------------
           // Long rough standing against short grass throws a thin shadow along
           // every mowing boundary. It is a small effect that does more for the
           // "this is a golf course" read than any amount of colour difference.
-          diffuseColor.rgb *= 1.0 - 0.13 * ccSeam(fe, 0.38) * offGreen * (1.0 - pathM);
+          diffuseColor.rgb *= 1.0 - 0.13 * ccSeam(fe, 0.38) * offGreen * (1.0 - pathM) * (1.0 - sandM);
           diffuseColor.rgb *= 1.0 - 0.11 * ccSeam(ge, 0.32);
 
           // --- turf grain ---------------------------------------------------
@@ -288,16 +275,14 @@ export function createTerrain(renderer, toonRamp) {
           float patches = ccNoise(vWorld * 0.10) - 0.5;   // ~10 yd
           float clumps  = ccNoise(vWorld * 0.40) - 0.5;   // ~2.5 yd
           float tufts   = ccNoise(vWorld * 1.60) - 0.5;   // ~0.6 yd
-          // Lighter than it was: the facets now supply most of the visual
-          // texture, and the two together read as noise on top of noise.
           float grain =
-            patches * 0.14 * (1.0 - smoothstep(2.5, 5.0,  fw)) +
-            clumps  * 0.20 * (1.0 - smoothstep(0.6, 1.25, fw)) +
-            tufts   * 0.20 * (1.0 - smoothstep(0.15, 0.31, fw));
+            patches * 0.28 * (1.0 - smoothstep(2.5, 5.0,  fw)) +
+            clumps  * 0.30 * (1.0 - smoothstep(0.6, 1.25, fw)) +
+            tufts   * 0.26 * (1.0 - smoothstep(0.15, 0.31, fw));
 
           // Full in the rough, a trace on the fairway so it isn't plastic,
           // none on the green or the concrete.
-          grain *= offGreen * (1.0 - 0.82 * fairM) * (1.0 - pathM);
+          grain *= offGreen * (1.0 - 0.82 * fairM) * (1.0 - pathM) * (1.0 - sandM);
 
           // Warm the bright side and cool the dark side — variation in hue as
           // well as value is what stops it looking like noise on flat paint.
