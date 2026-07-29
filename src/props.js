@@ -25,8 +25,8 @@ import {
  * spherical blob that's an excellent smooth normal, and smooth is what the
  * reference wants — its foliage has soft gradients, no visible facets.
  */
-function makeCanopyGeo() {
-  const geo = new THREE.IcosahedronGeometry(1, 2);
+function makeCanopyGeo(detail = 2) {
+  const geo = new THREE.IcosahedronGeometry(1, detail);
   const p = geo.attributes.position;
   const n = new Float32Array(p.count * 3);
   for (let i = 0; i < p.count; i++) {
@@ -54,7 +54,7 @@ function makeCanopyGeo() {
  * Geometry stays indexed and smooth-normalled: with a hard cel ramp, smooth
  * normals give clean curved bands, where flat shading would give facets.
  */
-function makePineGeo() {
+function makePineGeo(coarse = false) {
   const profile = [
     [0.00, 0.00], [1.15, 0.05], [1.78, 0.22], [2.00, 0.52],
     [1.84, 0.86], [1.48, 1.14], [1.18, 1.32],
@@ -68,8 +68,15 @@ function makePineGeo() {
   // 28 segments with 7 lobes gives exactly 4 samples per scallop. Any lobe
   // count that divides the segment count lands on the zero crossings and the
   // scallop silently disappears.
-  const SEGS = 28, LOBES = 7;
-  const geo = new THREE.LatheGeometry(profile, SEGS);
+  //
+  // The coarse build is for trees deep in the forest, which are a silhouette
+  // and nothing more. It keeps every third profile point and half the radial
+  // segments — about a sixth of the triangles — and 12 with 5 lobes still
+  // avoids the zero-crossing trap. At eighty-five yards and beyond there is
+  // nothing in the detailed one left to see.
+  const pts = coarse ? profile.filter((_, i) => i % 3 === 0 || i === profile.length - 1) : profile;
+  const SEGS = coarse ? 12 : 28, LOBES = coarse ? 5 : 7;
+  const geo = new THREE.LatheGeometry(pts, SEGS);
   const p = geo.attributes.position;
   for (let i = 0; i < p.count; i++) {
     const x = p.getX(i), y = p.getY(i), z = p.getZ(i);
@@ -219,7 +226,7 @@ export function createTrees(toonRamp) {
   const blobs = [];    // { x,y,z, s, squash, rot, hsl }
   const shrubs = [];   // { x,y,z, sx, sy, rot, hsl }
 
-  const plant = (x, z, sizeScale) => {
+  const plant = (x, z, sizeScale, far = false) => {
     if (!plantable(x, z)) return;
     const y = heightAt(x, z);
     if (y < -0.5) return; // never standing in the pond bed
@@ -231,8 +238,9 @@ export function createTrees(toonRamp) {
       // Tall bare pole, canopy only up top.
       const trunkH = lerp(11, 17, rnd()) * k;
       const girth = lerp(0.42, 0.60, rnd()) * k;
-      trunks.push({ x, y, z, rx: girth, ry: trunkH / 3.6, rot: rnd() * Math.PI * 2 });
+      trunks.push({ x, y, z, rx: girth, ry: trunkH / 3.6, rot: rnd() * Math.PI * 2, far });
       pines.push({
+        far,
         x, y: y + trunkH * 0.58, z,
         s: lerp(0.95, 1.35, rnd()) * k, sy: lerp(0.85, 1.15, rnd()),
         rot: rnd() * Math.PI * 2, lean: rnd(),
@@ -243,6 +251,7 @@ export function createTrees(toonRamp) {
 
     if (kind === 'pine') {
       pines.push({
+        far,
         x, y: y - 0.2, z,
         s: lerp(1.7, 2.9, rnd()) * k, sy: lerp(0.9, 1.25, rnd()),
         rot: rnd() * Math.PI * 2, lean: rnd(),
@@ -273,13 +282,14 @@ export function createTrees(toonRamp) {
     }[kind];
 
     const s = lerp(spec.h[0], spec.h[1], rnd()) * k;
-    trunks.push({ x, y, z, rx: s, ry: s, rot: rnd() * Math.PI * 2 });
+    trunks.push({ x, y, z, rx: s, ry: s, rot: rnd() * Math.PI * 2, far });
     const n = Math.round(lerp(spec.lo, spec.hi, rnd()));
     const base = spec.hsl();
     for (let i = 0; i < n; i++) {
       const a = rnd() * Math.PI * 2;
       const r = i === 0 ? 0 : lerp(0.5, 1.15, rnd());
       blobs.push({
+        far,
         x: x + Math.cos(a) * r * s,
         y: y + (3.1 + (i === 0 ? 0.5 : lerp(-0.35, 1.0, rnd()))) * s,
         z: z + Math.sin(a) * r * s,
@@ -309,14 +319,14 @@ export function createTrees(toonRamp) {
   for (let i = 0; i < 2400; i++) {
     const z = lerp(zNear + 30, zFar - 20, rnd());
     const side = rnd() < 0.5 ? 1 : -1;
-    plant(centreXAt(z) + side * lerp(85, 260, rnd()), z, lerp(0.9, 1.3, rnd()));
+    plant(centreXAt(z) + side * lerp(85, 260, rnd()), z, lerp(0.9, 1.3, rnd()), true);
   }
 
   // Pass C — out to the property line.
   for (let i = 0; i < 1600; i++) {
     const a = rnd() * Math.PI * 2;
     const r = lerp(WORLD_SIZE * 0.20, WORLD_SIZE * 0.50, rnd());
-    plant(WORLD_CX + Math.sin(a) * r, WORLD_CZ + Math.cos(a) * r, lerp(1.0, 1.5, rnd()));
+    plant(WORLD_CX + Math.sin(a) * r, WORLD_CZ + Math.cos(a) * r, lerp(1.0, 1.5, rnd()), true);
   }
 
   // Pass D — azaleas, in drifts along the front of the treeline. One colour
@@ -347,28 +357,6 @@ export function createTrees(toonRamp) {
   }
 
   // ------------------------------------------------------------ build meshes
-  const trunkGeo = new THREE.CylinderGeometry(0.26, 0.42, 3.6, 20, 1);
-  trunkGeo.translate(0, 1.8, 0);
-  const canopyGeo = makeCanopyGeo();
-
-  const meshes = {
-    trunk: new THREE.InstancedMesh(trunkGeo,
-      new THREE.MeshToonMaterial({ color: 0x8d6547, gradientMap: toonRamp }),
-      Math.max(1, trunks.length)),
-    blob: new THREE.InstancedMesh(canopyGeo,
-      new THREE.MeshToonMaterial({ color: 0xffffff, gradientMap: toonRamp }),
-      Math.max(1, blobs.length)),
-    pine: new THREE.InstancedMesh(makePineGeo(),
-      new THREE.MeshToonMaterial({ color: 0xffffff, gradientMap: toonRamp }),
-      Math.max(1, pines.length)),
-    shrub: new THREE.InstancedMesh(canopyGeo,
-      new THREE.MeshToonMaterial({ color: 0xffffff, gradientMap: toonRamp }),
-      Math.max(1, shrubs.length)),
-  };
-
-  const m = new THREE.Matrix4();
-  const q = new THREE.Quaternion();
-  // ------------------------------------------------------ tree density map
   // Where the trees actually ended up, at about three yards a texel.
   //
   // The pine straw beds and the grass both need to know this, and neither can
@@ -378,50 +366,83 @@ export function createTrees(toonRamp) {
   // and it costs one small texture per hole.
   buildTreeMap(trunks, pines);
 
+  const m = new THREE.Matrix4();
+  const q = new THREE.Quaternion();
   const e = new THREE.Euler();
   const pos = new THREE.Vector3();
   const scl = new THREE.Vector3();
   const col = new THREE.Color();
 
-  trunks.forEach((t, i) => {
-    e.set(0, t.rot, 0);
-    m.compose(pos.set(t.x, t.y, t.z), q.setFromEuler(e), scl.set(t.rx, t.ry, t.rx));
-    meshes.trunk.setMatrixAt(i, m);
-  });
+  /**
+   * One complete set of instanced meshes, at one level of detail.
+   *
+   * Four fifths of the triangles in this scene were trees, and four fifths of
+   * the trees are deep forest or property line — eighty-five yards off the
+   * corridor at the very nearest, where a canopy is a silhouette and nothing
+   * more. Those get roughly a sixth of the geometry.
+   *
+   * They are also dropped from the shadow pass, which is the larger saving of
+   * the two. The shadow camera is deliberately tight around the player, so a
+   * tree that far out can only ever cast into ground nobody is looking at —
+   * but an InstancedMesh's bounds span every instance, so it is never frustum
+   * culled, and all of them were being re-rendered into the shadow map every
+   * frame regardless.
+   */
+  const build = (far) => {
+    const trunkGeo = new THREE.CylinderGeometry(0.26, 0.42, 3.6, far ? 8 : 20, 1);
+    trunkGeo.translate(0, 1.8, 0);
+    const canopyGeo = makeCanopyGeo(far ? 1 : 2);
+    const leaf = () => new THREE.MeshToonMaterial({ color: 0xffffff, gradientMap: toonRamp });
+    const mine = (arr) => arr.filter((o) => !!o.far === far);
 
-  blobs.forEach((b, i) => {
-    e.set(b.tilt, b.rot, -b.tilt);
-    m.compose(pos.set(b.x, b.y, b.z), q.setFromEuler(e), scl.set(b.s, b.s * b.squash, b.s));
-    meshes.blob.setMatrixAt(i, m);
-    col.setHSL(b.hsl[0], b.hsl[1], b.hsl[2]);
-    meshes.blob.setColorAt(i, col);
-  });
+    const T = mine(trunks), B = mine(blobs), P = mine(pines), S = mine(shrubs);
+    const trunkMesh = new THREE.InstancedMesh(trunkGeo,
+      new THREE.MeshToonMaterial({ color: 0x8d6547, gradientMap: toonRamp }), Math.max(1, T.length));
+    const blobMesh = new THREE.InstancedMesh(canopyGeo, leaf(), Math.max(1, B.length));
+    const pineMesh = new THREE.InstancedMesh(makePineGeo(far), leaf(), Math.max(1, P.length));
+    const shrubMesh = new THREE.InstancedMesh(canopyGeo, leaf(), Math.max(1, S.length));
 
-  pines.forEach((p, i) => {
-    e.set(lerp(-0.05, 0.05, p.lean), p.rot, lerp(0.05, -0.05, p.lean));
-    m.compose(pos.set(p.x, p.y, p.z), q.setFromEuler(e), scl.set(p.s, p.s * p.sy, p.s));
-    meshes.pine.setMatrixAt(i, m);
-    col.setHSL(p.hsl[0], p.hsl[1], p.hsl[2]);
-    meshes.pine.setColorAt(i, col);
-  });
+    T.forEach((t, i) => {
+      e.set(0, t.rot, 0);
+      m.compose(pos.set(t.x, t.y, t.z), q.setFromEuler(e), scl.set(t.rx, t.ry, t.rx));
+      trunkMesh.setMatrixAt(i, m);
+    });
+    B.forEach((b, i) => {
+      e.set(b.tilt, b.rot, -b.tilt);
+      m.compose(pos.set(b.x, b.y, b.z), q.setFromEuler(e), scl.set(b.s, b.s * b.squash, b.s));
+      blobMesh.setMatrixAt(i, m);
+      col.setHSL(b.hsl[0], b.hsl[1], b.hsl[2]);
+      blobMesh.setColorAt(i, col);
+    });
+    P.forEach((p, i) => {
+      e.set(lerp(-0.05, 0.05, p.lean), p.rot, lerp(0.05, -0.05, p.lean));
+      m.compose(pos.set(p.x, p.y, p.z), q.setFromEuler(e), scl.set(p.s, p.s * p.sy, p.s));
+      pineMesh.setMatrixAt(i, m);
+      col.setHSL(p.hsl[0], p.hsl[1], p.hsl[2]);
+      pineMesh.setColorAt(i, col);
+    });
+    S.forEach((sh, i) => {
+      e.set(0, sh.rot, 0);
+      m.compose(pos.set(sh.x, sh.y, sh.z), q.setFromEuler(e), scl.set(sh.sx, sh.sy, sh.sx));
+      shrubMesh.setMatrixAt(i, m);
+      col.setHSL(sh.hsl[0], sh.hsl[1], sh.hsl[2]);
+      shrubMesh.setColorAt(i, col);
+    });
 
-  shrubs.forEach((sh, i) => {
-    e.set(0, sh.rot, 0);
-    m.compose(pos.set(sh.x, sh.y, sh.z), q.setFromEuler(e), scl.set(sh.sx, sh.sy, sh.sx));
-    meshes.shrub.setMatrixAt(i, m);
-    col.setHSL(sh.hsl[0], sh.hsl[1], sh.hsl[2]);
-    meshes.shrub.setColorAt(i, col);
-  });
+    for (const [mesh, n] of [[trunkMesh, T.length], [blobMesh, B.length],
+                             [pineMesh, P.length], [shrubMesh, S.length]]) {
+      mesh.count = n;
+      mesh.visible = n > 0;
+      mesh.instanceMatrix.needsUpdate = true;
+      if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
+      mesh.castShadow = !far;
+      mesh.frustumCulled = false;
+      group.add(mesh);
+    }
+  };
 
-  const counts = { trunk: trunks.length, blob: blobs.length, pine: pines.length, shrub: shrubs.length };
-  for (const [key, mesh] of Object.entries(meshes)) {
-    mesh.count = Math.max(1, counts[key]);
-    mesh.instanceMatrix.needsUpdate = true;
-    if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
-    mesh.castShadow = true;
-    mesh.frustumCulled = false;
-    group.add(mesh);
-  }
+  build(false);
+  build(true);
 
   return group;
 }

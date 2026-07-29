@@ -32,7 +32,10 @@ import { HOLES, TOTAL_PAR } from './holes.js';
 
 // ---------------------------------------------------------------- renderer
 const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
-renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+// Starting point only — adaptResolution() below takes over from here.
+const MAX_SCALE = Math.min(window.devicePixelRatio, 2);
+const MIN_SCALE = 0.7;
+renderer.setPixelRatio(MAX_SCALE);
 renderer.setSize(window.innerWidth, window.innerHeight);
 renderer.shadowMap.enabled = true;
 renderer.shadowMap.type = THREE.PCFSoftShadowMap;
@@ -437,6 +440,44 @@ function camCtx() {
   };
 }
 
+// ------------------------------------------------------ adaptive resolution
+/**
+ * Give back resolution when frames run long, take it back when they don't.
+ *
+ * Every other optimisation here is a guess about someone else's hardware —
+ * triangle counts and draw calls were tuned against one machine, and a machine
+ * with half the fill rate is bottlenecked somewhere else entirely. Render scale
+ * is the one lever that always works, and unlike a quality preset it does not
+ * need anyone to know what their GPU is: if frames are long, there are too many
+ * pixels, whatever the reason.
+ *
+ * Deliberately sluggish. A slow average and a cooldown after each change mean
+ * it responds to the machine rather than to one bad frame, and never sits
+ * oscillating between two scales.
+ */
+const perf = { avg: 16.7, scale: MAX_SCALE, cooldown: 0, pinned: false };
+
+function adaptResolution(dt) {
+  // Synthetic frames (the screenshot hook drives frame() by hand) have a dt of
+  // essentially zero and would otherwise read as an infinitely fast machine.
+  if (perf.pinned || dt < 0.002) return;
+  perf.avg += (dt * 1000 - perf.avg) * 0.05;
+  perf.cooldown -= dt;
+  if (perf.cooldown > 0) return;
+
+  let want = perf.scale;
+  if (perf.avg > 23 && perf.scale > MIN_SCALE) want = Math.max(MIN_SCALE, perf.scale - 0.25);
+  else if (perf.avg < 13 && perf.scale < MAX_SCALE) want = Math.min(MAX_SCALE, perf.scale + 0.25);
+  if (want === perf.scale) return;
+
+  perf.scale = want;
+  renderer.setPixelRatio(want);
+  renderer.setSize(window.innerWidth, window.innerHeight);
+  // Judge the new scale on its own frames, not on the old ones.
+  perf.avg = 16.7;
+  perf.cooldown = 1.5;
+}
+
 // ---------------------------------------------------------------- loop
 const clock = new THREE.Clock();
 let time = 0;
@@ -447,6 +488,7 @@ function frame() {
   const dt = Math.min(clock.getDelta(), 0.05);
   time += dt;
 
+  adaptResolution(dt);
   input.update(dt);
   golfer.update(dt, time);
   ball.update(dt);
@@ -537,8 +579,18 @@ window.freecam = Object.assign(
     },
     off: () => { toggleFreeCam(false); return 'freecam off'; },
 
+    /** Pin the render scale, or pass nothing to hand it back to the adapter. */
+    quality: (v) => {
+      if (v === undefined) { perf.pinned = false; return 'auto (' + perf.scale.toFixed(2) + 'x)'; }
+      perf.pinned = true;
+      perf.scale = Math.max(0.4, Math.min(3, v));
+      renderer.setPixelRatio(perf.scale);
+      renderer.setSize(window.innerWidth, window.innerHeight);
+      return 'pinned at ' + perf.scale.toFixed(2) + 'x';
+    },
+
     /** Live handles on the render objects, for automated shading audits. */
-    dbg: () => ({ renderer, scene, camera, lights, terrain, game, THREE }),
+    dbg: () => ({ renderer, scene, camera, lights, terrain, game, golfer, THREE }),
 
     /** Jump straight to a hole by number (1-18), skipping the scorecard. */
     hole: (n) => {

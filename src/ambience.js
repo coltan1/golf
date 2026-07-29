@@ -70,7 +70,10 @@ export function createSunRays() {
   const zNear = TEE.z - 30;
   const zFar = WORLD_CZ - WORLD_SIZE * 0.28;
 
-  for (let i = 0; i < 26; i++) {
+  // Fewer, because each one is a large additive quad and overlapping
+  // translucency is fill rate, which is exactly what a modest GPU runs out
+  // of first. Fifteen still reads as shafts through a canopy.
+  for (let i = 0; i < 15; i++) {
     const z = lerp(zNear, zFar, rnd());
     const side = rnd() < 0.5 ? 1 : -1;
     const n = nearest(centreXAt(z), z);

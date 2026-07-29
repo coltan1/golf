@@ -164,28 +164,59 @@ export function createBackdrop(toonRamp) {
     { count: 26, ringR: 1500, top: [210, 330], w: [380, 620], d: [240, 380], color: 0x577f89 },
   ];
 
+  // One mesh per layer, not one per ridge.
+  //
+  // A layer's ridges already share a material and never move relative to one
+  // another, so they were sixty-six draw calls buying nothing that three could
+  // not. Baking each ridge's placement into its vertices and concatenating
+  // costs a little memory once, at build time, and hands the GPU one buffer.
+  const merge = (geos) => {
+    let vTotal = 0, iTotal = 0;
+    for (const g of geos) { vTotal += g.attributes.position.count; iTotal += g.index.count; }
+    const position = new Float32Array(vTotal * 3);
+    const normal = new Float32Array(vTotal * 3);
+    const index = vTotal > 65535 ? new Uint32Array(iTotal) : new Uint16Array(iTotal);
+    let vo = 0, io = 0;
+    for (const g of geos) {
+      position.set(g.attributes.position.array, vo * 3);
+      normal.set(g.attributes.normal.array, vo * 3);
+      const src = g.index.array;
+      for (let k = 0; k < src.length; k++) index[io + k] = src[k] + vo;
+      vo += g.attributes.position.count;
+      io += src.length;
+      g.dispose();
+    }
+    const out = new THREE.BufferGeometry();
+    out.setAttribute('position', new THREE.BufferAttribute(position, 3));
+    out.setAttribute('normal', new THREE.BufferAttribute(normal, 3));
+    out.setIndex(new THREE.BufferAttribute(index, 1));
+    return out;
+  };
+
+  const place = new THREE.Matrix4();
   for (const L of LAYERS) {
     const mat = new THREE.MeshToonMaterial({ color: L.color, gradientMap: toonRamp });
+    const parts = [];
     for (let i = 0; i < L.count; i++) {
       const a = (i / L.count) * Math.PI * 2 + (rnd() - 0.5) * 0.30;
       const r = L.ringR * lerp(0.9, 1.12, rnd());
-      const mesh = new THREE.Mesh(
-        forestRidgeGeo(
-          rnd,
-          lerp(L.w[0], L.w[1], rnd()),
-          lerp(L.top[0], L.top[1], rnd()),
-          lerp(L.d[0], L.d[1], rnd())
-        ),
-        mat
+      const geo = forestRidgeGeo(
+        rnd,
+        lerp(L.w[0], L.w[1], rnd()),
+        lerp(L.top[0], L.top[1], rnd()),
+        lerp(L.d[0], L.d[1], rnd())
       );
-      mesh.position.set(WORLD_CX + Math.sin(a) * r, 0, WORLD_CZ + Math.cos(a) * r);
-      mesh.rotation.y = a;
-      // Far too big and far away to take part in the shadow map.
-      mesh.castShadow = mesh.receiveShadow = false;
-      mesh.frustumCulled = false;
-      mesh.renderOrder = -88;
-      group.add(mesh);
+      place.makeRotationY(a);
+      place.setPosition(WORLD_CX + Math.sin(a) * r, 0, WORLD_CZ + Math.cos(a) * r);
+      geo.applyMatrix4(place);
+      parts.push(geo);
     }
+    const mesh = new THREE.Mesh(merge(parts), mat);
+    // Far too big and far away to take part in the shadow map.
+    mesh.castShadow = mesh.receiveShadow = false;
+    mesh.frustumCulled = false;
+    mesh.renderOrder = -88;
+    group.add(mesh);
   }
 
   return group;
