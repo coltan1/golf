@@ -250,8 +250,24 @@ export function createTerrain(renderer, toonRamp) {
         uniform int  uBunkN;
 
         /** Signed yards inside the nearest bunker. Mirrors shapeField(). */
+        // Signed yards to the nearest bunker outline. Positive inside.
+        //
+        // This has to be *continuous*, which is a stronger requirement than it
+        // looks. Everything downstream sharpens it against its own derivative
+        // — sandM is a smoothstep whose edges are ±fwidth(be) — so a step in
+        // the field, however far out in the grass it sits, blows fwidth up and
+        // drags that smoothstep back toward the middle of its range. Skipping
+        // distant bunkers with a sentinel put a step of several hundred yards
+        // at the cutoff radius, and smoothstep(-989, 989, -9.6) is 0.49, not
+        // 0: sand shading came out half-strength along a one-pixel ellipse
+        // ringing every bunker, out in clean fairway.
+        //
+        // So nothing bails out. The harmonics fade to nothing by r = 2.1,
+        // which is well outside the outline they shape (that lives near
+        // r = 1), leaving a plain radial field beyond it — cheap, since the
+        // atan goes away with them, and smooth all the way out.
         float ccBunkerEdge(vec2 p) {
-          float best = -999.0;
+          float best = -1e4;
           for (int i = 0; i < 8; i++) {
             if (i >= uBunkN) break;
             vec4 A = uBunkA[i];
@@ -260,14 +276,14 @@ export function createTerrain(renderer, toonRamp) {
             vec2 d = p - A.xy;
             vec2 e = vec2((d.x * c + d.y * sn) / A.z, (-d.x * sn + d.y * c) / A.w);
             float r = length(e);
-            if (r > 2.2) continue;
             float k = 1.0;
-            if (r > 0.001) {
+            if (r > 0.001 && r < 2.1) {
               float a = atan(e.y, e.x);
               vec3 ha = uBunkHA[i], hp = uBunkHP[i];
-              k = 1.0 + ha.x * sin(a * 2.0 + hp.x)
-                      + ha.y * sin(a * 3.0 + hp.y)
-                      + ha.z * sin(a * 5.0 + hp.z);
+              float hw = 1.0 - smoothstep(1.30, 2.10, r);
+              k = 1.0 + hw * (ha.x * sin(a * 2.0 + hp.x)
+                            + ha.y * sin(a * 3.0 + hp.y)
+                            + ha.z * sin(a * 5.0 + hp.z));
             }
             best = max(best, (1.0 - r / k) * B.y);
           }
