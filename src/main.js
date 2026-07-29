@@ -23,6 +23,7 @@ import { Ball, CLUBS, pickClub } from './ball.js';
 import { SwipeSwing } from './input.js';
 import { CameraRig } from './camerarig.js';
 import { AimLine } from './aimline.js';
+import { createSunRays, createButterflies, createMotes } from './ambience.js';
 import { FreeCam } from './freecam.js';
 import { Audio } from './audio.js';
 import { Hud, scoreName } from './hud.js';
@@ -56,6 +57,7 @@ const audio = new Audio();
 
 // ---------------------------------------------------------------- world
 let terrain, water, creek, clouds, flag, clubhouse, golfer, ball, rig, aimLine, input, lights, freeCam;
+let sunRays, butterflies, motes;
 
 // Everything belonging to the current hole hangs off this, so switching holes
 // is a matter of disposing one subtree rather than tracking every object.
@@ -99,6 +101,9 @@ function buildWorld() {
 
   add(createTrees(ramp));
   add(createGrass(ramp));
+  sunRays = add(createSunRays());
+  butterflies = add(createButterflies());
+  motes = add(createMotes());
   clubhouse = add(createClubhouse(ramp));
   add(createTeeMarkers(ramp));
 
@@ -421,6 +426,9 @@ function frame() {
   ball.updateScale(camera);
   aimLine.update(dt);
   clouds.userData.tick(dt);
+  sunRays.userData.tick(dt, camera);
+  butterflies.userData.tick(dt);
+  motes.userData.tick(dt);
   if (water) water.userData.tick(time);
   if (creek) creek.userData.tick(time);
   flag.userData.tick(time);

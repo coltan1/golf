@@ -118,7 +118,11 @@ function forestRidgeGeo(rnd, w, top, d) {
 
   const p = geo.attributes.position;
   const sa = rnd() * 90, sb = rnd() * 90;
-  const amp = 24 + rnd() * 14;
+  // Scaled to the form. A fixed amplitude is a decent canopy on a 200-yard
+  // ridge and invisible on a 600-yard one, which is what turned the far
+  // layers into bare smooth mountains — the wavelength stays put, so this
+  // deepens the clumps without asking the mesh for detail it cannot carry.
+  const amp = (24 + rnd() * 14) * (0.7 + w / 620);
 
   for (let i = 0; i < p.count; i++) {
     const x = p.getX(i), y = p.getY(i), z = p.getZ(i);
@@ -155,9 +159,9 @@ export function createBackdrop(toonRamp) {
     // shadow band already multiplies these by ~0.48, and the far side of the
     // ring faces away from the sun, so a dark base colour turns the whole
     // horizon into a void when you're playing towards it.
-    { count: 18, ringR: 620,  top: [95, 165],  w: [200, 340], d: [130, 210], color: 0x4d8d61 },
-    { count: 22, ringR: 1000, top: [150, 250], w: [280, 460], d: [180, 290], color: 0x559481 },
-    { count: 26, ringR: 1500, top: [230, 380], w: [380, 620], d: [240, 380], color: 0x709fb6 },
+    { count: 18, ringR: 620,  top: [95, 165],  w: [200, 340], d: [130, 210], color: 0x3f7a52 },
+    { count: 22, ringR: 1000, top: [150, 250], w: [280, 460], d: [180, 290], color: 0x4a8271 },
+    { count: 26, ringR: 1500, top: [210, 330], w: [380, 620], d: [240, 380], color: 0x63909a },
   ];
 
   for (const L of LAYERS) {

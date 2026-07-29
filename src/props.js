@@ -8,11 +8,11 @@
  */
 
 import * as THREE from 'three';
-import { mulberry32, lerp, hash3, clamp } from './util.js';
+import { mulberry32, lerp, hash3, clamp, fbm2 } from './util.js';
 import {
   heightAt, nearest, centreXAt, fairwayHalfWidth, bunkerField, pondField,
   GREEN, HOLE_POS, TEE, WORLD_CX, WORLD_CZ, WORLD_SIZE,
-  greenEdge, bunkerEdge, cartPathAt, CREEK,
+  greenEdge, bunkerEdge, CREEK,
 } from './course.js';
 
 // ---------------------------------------------------------------- geometry
@@ -165,7 +165,7 @@ export function createTrees(toonRamp) {
         x, y: y + trunkH * 0.58, z,
         s: lerp(0.95, 1.35, rnd()) * k, sy: lerp(0.85, 1.15, rnd()),
         rot: rnd() * Math.PI * 2, lean: rnd(),
-        hsl: [lerp(0.30, 0.35, rnd()), lerp(0.30, 0.42, rnd()), lerp(0.26, 0.36, rnd())],
+        hsl: [lerp(0.30, 0.36, rnd()), lerp(0.34, 0.50, rnd()), lerp(0.16, 0.25, rnd())],
       });
       return;
     }
@@ -175,7 +175,7 @@ export function createTrees(toonRamp) {
         x, y: y - 0.2, z,
         s: lerp(1.7, 2.9, rnd()) * k, sy: lerp(0.9, 1.25, rnd()),
         rot: rnd() * Math.PI * 2, lean: rnd(),
-        hsl: [lerp(0.29, 0.36, rnd()), lerp(0.34, 0.48, rnd()), lerp(0.28, 0.42, rnd())],
+        hsl: [lerp(0.29, 0.37, rnd()), lerp(0.38, 0.54, rnd()), lerp(0.17, 0.29, rnd())],
       });
       return;
     }
@@ -185,11 +185,11 @@ export function createTrees(toonRamp) {
     const spec = {
       broadleaf: {
         h: [1.5, 2.3], lo: 2, hi: 3, sz: [1.9, 2.5], sq: 0.95,
-        hsl: () => [lerp(0.22, 0.30, rnd()), lerp(0.42, 0.60, rnd()), lerp(0.40, 0.56, rnd())],
+        hsl: () => [lerp(0.22, 0.31, rnd()), lerp(0.44, 0.62, rnd()), lerp(0.24, 0.37, rnd())],
       },
       young: {
         h: [0.7, 1.1], lo: 1, hi: 2, sz: [1.5, 2.0], sq: 1.05,
-        hsl: () => [lerp(0.24, 0.32, rnd()), lerp(0.46, 0.62, rnd()), lerp(0.44, 0.58, rnd())],
+        hsl: () => [lerp(0.24, 0.33, rnd()), lerp(0.48, 0.64, rnd()), lerp(0.29, 0.42, rnd())],
       },
       dogwood: {
         h: [0.9, 1.3], lo: 2, hi: 3, sz: [1.6, 2.2], sq: 0.62,
@@ -197,7 +197,7 @@ export function createTrees(toonRamp) {
       },
       maple: {
         h: [1.1, 1.6], lo: 2, hi: 3, sz: [1.7, 2.2], sq: 0.90,
-        hsl: () => [lerp(0.96, 1.0, rnd()), lerp(0.42, 0.58, rnd()), lerp(0.34, 0.46, rnd())],
+        hsl: () => [lerp(0.96, 1.0, rnd()), lerp(0.44, 0.60, rnd()), lerp(0.25, 0.36, rnd())],
       },
     }[kind];
 
@@ -227,7 +227,7 @@ export function createTrees(toonRamp) {
   const zFar = WORLD_CZ - WORLD_SIZE * 0.44;
 
   // Pass A — the treeline proper, biased hard toward the corridor edge.
-  for (let i = 0; i < 1100; i++) {
+  for (let i = 0; i < 1500; i++) {
     const z = lerp(zNear, zFar, rnd());
     const side = rnd() < 0.5 ? 1 : -1;
     const off = lerp(16, 95, Math.pow(rnd(), 1.8));
@@ -235,14 +235,14 @@ export function createTrees(toonRamp) {
   }
 
   // Pass B — deep forest behind it.
-  for (let i = 0; i < 1500; i++) {
+  for (let i = 0; i < 2400; i++) {
     const z = lerp(zNear + 30, zFar - 20, rnd());
     const side = rnd() < 0.5 ? 1 : -1;
     plant(centreXAt(z) + side * lerp(85, 260, rnd()), z, lerp(0.9, 1.3, rnd()));
   }
 
   // Pass C — out to the property line.
-  for (let i = 0; i < 1100; i++) {
+  for (let i = 0; i < 1600; i++) {
     const a = rnd() * Math.PI * 2;
     const r = lerp(WORLD_SIZE * 0.20, WORLD_SIZE * 0.50, rnd());
     plant(WORLD_CX + Math.sin(a) * r, WORLD_CZ + Math.cos(a) * r, lerp(1.0, 1.5, rnd()));
@@ -403,7 +403,7 @@ export function createGrass(toonRamp) {
   const zFar = WORLD_CZ - WORLD_SIZE * 0.30;
   const tufts = [];
 
-  for (let i = 0; i < 26000; i++) {
+  for (let i = 0; i < 44000; i++) {
     const z = lerp(zNear, zFar, rnd());
     const side = rnd() < 0.5 ? 1 : -1;
     // Biased inward: most tufts sit just off the short grass.
@@ -417,17 +417,34 @@ export function createGrass(toonRamp) {
     if (greenEdge(x, z) > -1.5) continue;
     if (bunkerEdge(x, z) > -1.0) continue;
     if (pondField(x, z) < 1.15) continue;
-    if (cartPathAt(x, z, n) > 0.02) continue;
+
+    // Stop before the pine straw. The beds begin about seven yards past the
+    // fairway edge and are solid by twenty-six, and green tufts standing in
+    // brown needles read as a mistake — the terrain shader draws that band, so
+    // this has to agree with it. Distance only, deliberately: matching the
+    // shader's noise from here is not possible and not worth it, and a few
+    // stragglers along the edge of a bed look like weeds, which is right.
+    const past = n.dist - fairwayHalfWidth(n.t);
+    if (past > lerp(7, 17, rnd())) continue;
 
     const y = heightAt(x, z);
     if (y < -0.5) continue;
 
+    // Different strains, in broad patches. One turf everywhere is the tell of
+    // a generated course; real rough runs thick and coarse in places and thin
+    // and wiry in others, and the patches are far bigger than any one tuft.
+    // The same field drives how many blades stand here and how big they are,
+    // so a thick patch reads as thick from any distance.
+    const zone = 0.5 + 0.5 * fbm2(x * 0.026 + 5.7, z * 0.026 - 2.3);
+    if (rnd() > 0.30 + 0.85 * zone) continue;
+
     tufts.push({
       x, y: y - 0.05, z,
-      s: lerp(0.30, 0.52, rnd()),
-      sy: lerp(0.8, 1.35, rnd()),
+      s: lerp(0.30, 0.52, rnd()) * lerp(0.82, 1.40, zone),
+      sy: lerp(0.8, 1.35, rnd()) * lerp(0.88, 1.55, zone),
       rot: rnd() * Math.PI * 2,
       v: rnd(),
+      zone,
     });
   }
 
@@ -451,8 +468,14 @@ export function createGrass(toonRamp) {
     m.compose(p.set(t.x, t.y, t.z), q.setFromEuler(e), sc.set(t.s, t.s * t.sy, t.s));
     mesh.setMatrixAt(i, m);
     // A shade deeper and yellower than the turf under them, so a tuft reads as
-    // a blade catching light rather than as speckle on the ground.
-    col.setHSL(lerp(0.21, 0.27, t.v), lerp(0.42, 0.58, t.v), lerp(0.34, 0.46, t.v));
+    // a blade catching light rather than as speckle on the ground. Thick
+    // patches go deeper and cooler still: dense enough growth shades its own
+    // soil, which is most of why coarse turf looks darker than fine turf.
+    col.setHSL(
+      lerp(0.21, 0.29, t.v),
+      lerp(0.42, 0.58, t.v),
+      lerp(0.34, 0.46, t.v) * lerp(1.06, 0.78, t.zone)
+    );
     mesh.setColorAt(i, col);
   });
 

@@ -43,7 +43,6 @@ export let BUNKERS = [];
 export let POND = null;
 export let CREEK = null;   // { pts:[{x,z}], w: half-width, y: waterline }
 export let MOUNDS = [];
-export let CART_PATH = { offset: 40, halfWidth: 3.4, zFrom: -20, zTo: -400 };
 
 // Sampled centreline.
 const N = 700;
@@ -153,21 +152,6 @@ export function setHole(def) {
   GREEN_BASE = swell(GREEN.x, GREEN.z);
   WATER_Y = POND ? swell(POND.x, POND.z) - 1.15 : -999;
 
-  CART_PATH = {
-    offset: 40,
-    halfWidth: 3.4,
-    zFrom: pZ[0] - 24,
-    zTo: pZ[N - 1] + 30,
-  };
-}
-
-/** 0…1 coverage of the cart path at a point. `n` is a `nearest()` result. */
-export function cartPathAt(x, z, n) {
-  if (z > CART_PATH.zFrom || z < CART_PATH.zTo || n.side < 0) return 0;
-  const d = Math.abs(n.dist - CART_PATH.offset);
-  const fade = smoothstep(CART_PATH.zFrom - 6, CART_PATH.zFrom - 16, z) *
-               smoothstep(CART_PATH.zTo + 6, CART_PATH.zTo + 16, z);
-  return (1 - smoothstep(CART_PATH.halfWidth - 0.45, CART_PATH.halfWidth + 0.45, d)) * fade;
 }
 
 // ---------------------------------------------------------------- queries
@@ -523,13 +507,12 @@ export function heightAt(x, z) {
     1 - smoothstep(hw - 2.0, hw + 16.0, n.dist),
     smoothstep(-16.0, 1.0, ge)
   );
-  const path = cartPathAt(x, z, n);
   // Sand is not long grass. Letting the rough's relief and its grass-height
   // lift run through a bunker makes the sand lumpy, and those bumps tilt
   // normals far enough to drop cel bands — which is most of the mottled dark
   // patching that shows up in and around bunkers cut into the rough.
-  const unmown = (1 - mownTight) * (1 - path) * (1 - sandMask);
-  const unmownWide = (1 - mownWide) * (1 - path) * (1 - sandMask);
+  const unmown = (1 - mownTight) * (1 - sandMask);
+  const unmownWide = (1 - mownWide) * (1 - sandMask);
   // Rolling relief in the rough only. Mown ground stays smooth: a cel ramp
   // turns every gentle undulation into a wandering band edge, and on a fairway
   // that reads as a shading fault rather than as ground.
@@ -544,9 +527,6 @@ export function heightAt(x, z) {
   h += 0.34 * unmown;
 
   // The cart path is graded: sits just below the turf either side of it.
-  // Shallow: the path mask turns over less than a yard, so anything deeper
-  // than this grades steeply enough to draw a dark line down both kerbs.
-  h -= 0.10 * path;
 
   // A distant rim so the world never shows a cut edge against the sky.
   const rim = Math.max(0, n.dist - 150) * 0.11;
@@ -589,14 +569,16 @@ export const SURFACE_COLORS = {
   fairB:    [0xa8, 0xe0, 0x89],
   collar:   [0x9e, 0xdb, 0x7f],
   greenA:   [0xb3, 0xe9, 0x96],
-  sand:     [0xf9, 0xee, 0xd2],
-  sandDark: [0xe9, 0xd9, 0xb4],
+  // Augusta's sand is famously near-white — it is not beach sand. Keeping a
+  // little warmth in the damp rim stops it going blue in the fill light.
+  sand:     [0xfb, 0xfa, 0xf6],
+  sandDark: [0xe8, 0xe4, 0xd8],
   water:    [0x3f, 0x8d, 0xa6],
   waterEdge:[0x92, 0xd6, 0xdd],
-  path:     [0xe4, 0xdd, 0xcf],
-  pathAlt:  [0xd6, 0xce, 0xbe],
-  pathWear: [0xc6, 0xbd, 0xac],
-  pathEdge: [0xb4, 0xae, 0x9a],
+  // Pine straw. Warm red-brown, and darker than it looks in photographs —
+  // it sits in tree shade nearly all day.
+  straw:    [0x9d, 0x6b, 0x3e],
+  strawAlt: [0x85, 0x56, 0x31],
 };
 const C = SURFACE_COLORS;
 
@@ -670,19 +652,6 @@ export function makeCourseTexture(size = 1024) {
       if (collar > 0.001) mix(col, C.collar, collar * 0.95, col);
       const gMask = smoothstep(-0.4, 0.4, ge);
       if (gMask > 0.001) mix(col, C.greenA, gMask, col);
-
-      // --- cart path: concrete, offset to the right of play ---
-      const pathMask = cartPathAt(x, z, n);
-      if (pathMask > 0.001) {
-        const pd = Math.abs(n.dist - CART_PATH.offset);
-        const agg = 0.5 + 0.5 * fbm2(x * 0.62 + 21.4, z * 0.59 - 13.7);
-        mix(C.path, C.pathAlt, agg, tmp);
-        const wear = Math.exp(-Math.pow((pd - 1.45) / 0.62, 2));
-        mix(tmp, C.pathWear, wear * 0.45, tmp);
-        const kerb = smoothstep(CART_PATH.halfWidth - 1.1, CART_PATH.halfWidth - 0.2, pd);
-        mix(tmp, C.pathEdge, kerb * 0.75, tmp);
-        mix(col, tmp, pathMask, col);
-      }
 
       // --- bunkers: bright sand, damp at the rim ---
       const bf = bunkerField(x, z);

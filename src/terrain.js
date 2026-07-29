@@ -6,15 +6,15 @@
  *
  * It also carries a custom `aCourse` attribute — signed distance from the
  * centreline, and signed distance to the fairway and green edges — which the
- * material uses to draw the mowing lines, the cut seams, the turf grain and
- * the cart path per-pixel. Baking detail that fine into the texture would need
+ * material uses to draw the mowing lines, the cut seams, the pine straw beds
+ * and the turf grain per-pixel. Baking detail that fine in would need
  * a 4k+ canvas and would still alias; doing it in the shader keeps it crisp
  * underfoot and lets it fade out cleanly with distance.
  */
 
 import * as THREE from 'three';
 import {
-  WORLD_SIZE, WORLD_CX, WORLD_CZ, WATER_Y, POND, CREEK, MOW_PERIOD, CART_PATH,
+  WORLD_SIZE, WORLD_CX, WORLD_CZ, WATER_Y, POND, CREEK, MOW_PERIOD,
   SURFACE_COLORS, heightAt, makeCourseTexture, nearest, fairwayHalfWidth, greenEdge,
   bunkerEdge, BUNKERS,
 } from './course.js';
@@ -206,6 +206,8 @@ export function createTerrain(renderer, toonRamp) {
     shader.uniforms.uCollar = { value: colorUniform(SURFACE_COLORS.collar) };
     shader.uniforms.uGreen  = { value: colorUniform(SURFACE_COLORS.greenA) };
     shader.uniforms.uSand   = { value: colorUniform(SURFACE_COLORS.sand) };
+    shader.uniforms.uStraw  = { value: colorUniform(SURFACE_COLORS.straw) };
+    shader.uniforms.uStrawB = { value: colorUniform(SURFACE_COLORS.strawAlt) };
 
     // Bunker outlines go to the shader as parameters rather than as an
     // interpolated vertex attribute. The field is radial and nonlinear, so
@@ -295,6 +297,8 @@ export function createTerrain(renderer, toonRamp) {
         uniform vec3 uFairB;
         uniform vec3 uCollar;
         uniform vec3 uGreen;
+        uniform vec3 uStraw;
+        uniform vec3 uStrawB;
 
         // Cheap value noise for turf grain. Prefixed to avoid colliding with
         // anything three.js declares.
@@ -341,7 +345,7 @@ export function createTerrain(renderer, toonRamp) {
           #else
             float sSoft = 1.0;
           #endif
-          outgoingLight = mix(outgoingLight, uSand * 0.72 * sSoft, ccSandM * 0.82);
+          outgoingLight = mix(outgoingLight, uSand * 0.86 * sSoft, ccSandM * 0.82);
         }
         #include <opaque_fragment>`)
       .replace('#include <map_fragment>', `#include <map_fragment>
@@ -365,19 +369,6 @@ export function createTerrain(renderer, toonRamp) {
           ccSandM = sandM;
           float offSand = 1.0 - sandM;
 
-          // --- cart path ---------------------------------------------------
-          float pd = abs(vCourse.x + ${CART_PATH.offset.toFixed(1)});
-          float inZ = step(${CART_PATH.zTo.toFixed(1)}, vWorld.y)
-                    * step(vWorld.y, ${CART_PATH.zFrom.toFixed(1)});
-          float pathM = (1.0 - smoothstep(
-            ${(CART_PATH.halfWidth - 0.35).toFixed(2)},
-            ${(CART_PATH.halfWidth + 0.35).toFixed(2)}, pd)) * inZ;
-
-          // Expansion joints every few yards, plus a crisp shadowed edge where
-          // the slab meets turf. Both are far too fine for the baked texture.
-          float joint = ccSeam(fract(vWorld.y / 7.5) - 0.5, 0.035) * pathM;
-          float slabEdge = ccSeam(pd - ${CART_PATH.halfWidth.toFixed(2)}, 0.22) * inZ;
-          diffuseColor.rgb *= 1.0 - 0.20 * joint - 0.16 * slabEdge;
 
           // --- hard surface boundaries -------------------------------------
           // The bake can only resolve an edge to a texel or so, and a texel is
@@ -397,11 +388,11 @@ export function createTerrain(renderer, toonRamp) {
 
           float nearF = 1.0 - smoothstep(0.30, 1.10, abs(fe));
           diffuseColor.rgb = mix(diffuseColor.rgb, mix(uRough, fairCol, fairM),
-                                 nearF * 0.92 * offGreen * offSand * (1.0 - pathM));
+                                 nearF * 0.92 * offGreen * offSand);
 
           float nearG = 1.0 - smoothstep(0.28, 1.00, abs(ge));
           diffuseColor.rgb = mix(diffuseColor.rgb, mix(uCollar, uGreen, greenM),
-                                 nearG * 0.92 * offSand * (1.0 - pathM));
+                                 nearG * 0.92 * offSand);
 
           // Sand composited last, so it wins wherever a bunker meets anything.
           // Without this the bake's single-texel edge magnifies into a pale
@@ -424,8 +415,35 @@ export function createTerrain(renderer, toonRamp) {
           // Long rough standing against short grass throws a thin shadow along
           // every mowing boundary. It is a small effect that does more for the
           // "this is a golf course" read than any amount of colour difference.
-          diffuseColor.rgb *= 1.0 - 0.13 * ccSeam(fe, 0.38) * offGreen * (1.0 - pathM) * (1.0 - sandM);
+          diffuseColor.rgb *= 1.0 - 0.13 * ccSeam(fe, 0.38) * offGreen * (1.0 - sandM);
           diffuseColor.rgb *= 1.0 - 0.11 * ccSeam(ge, 0.32);
+
+          // --- pine straw beds ----------------------------------------------
+          // Under the trees there is no grass at all. The ground is a carpet
+          // of needles raked into irregular beds around the trunks, and it is
+          // most of why the reference reads as *this* course rather than a
+          // generic parkland one: a warm red-brown band separating the green
+          // corridor from the dark of the forest.
+          //
+          // Keyed off distance past the fairway edge, so the beds begin about
+          // where the trees do, then broken up by noise so their outlines
+          // wander instead of running parallel to the hole.
+          float strawN = ccNoise(vWorld * 0.048) * 0.62 + ccNoise(vWorld * 0.150) * 0.38;
+          float strawReach = smoothstep(-7.0, -26.0, fe);
+          float strawM = strawReach
+                       * smoothstep(0.44, 0.60, strawN + strawReach * 0.20)
+                       * offGreen * offSand;
+          vec3 strawCol = mix(uStraw, uStrawB, ccNoise(vWorld * 0.85));
+          diffuseColor.rgb = mix(diffuseColor.rgb, strawCol, strawM * 0.94);
+          float offStraw = 1.0 - strawM;
+
+          // --- grass types ---------------------------------------------------
+          // A course is not one turf. Coarser, denser strains grow in patches
+          // against the fine stuff — a shade deeper, and cooler for being
+          // thick enough to shade its own soil.
+          float zone = ccNoise(vWorld * 0.026 + 5.7);
+          float dense = smoothstep(0.50, 0.76, zone) * offStraw * offSand * offGreen;
+          diffuseColor.rgb *= mix(vec3(1.0), vec3(0.90, 0.98, 0.87), dense);
 
           // --- turf grain ---------------------------------------------------
           // The baked texture is ~0.76 yards per texel and cannot resolve
@@ -445,7 +463,7 @@ export function createTerrain(renderer, toonRamp) {
 
           // Full in the rough, a trace on the fairway so it isn't plastic,
           // none on the green or the concrete.
-          grain *= offGreen * (1.0 - 0.82 * fairM) * (1.0 - pathM) * (1.0 - sandM);
+          grain *= offGreen * (1.0 - 0.82 * fairM) * (1.0 - sandM) * offStraw;
 
           // Warm the bright side and cool the dark side — variation in hue as
           // well as value is what stops it looking like noise on flat paint.
