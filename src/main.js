@@ -391,7 +391,7 @@ function wireInput() {
     if (game.state !== 'charging') return;
     golfer.driveTo(progress);
     game.pending.lateral = lateral;
-    hud.setPower(clamp(Math.abs(golfer._thetaVel) / 17, 0, 1));
+    hud.setPower(golfer.livePower);
   };
 
   input.onDriveEnd = ({ auto, lateral } = {}) => {
@@ -609,7 +609,7 @@ window.freecam = Object.assign(
     },
 
     /** Live handles on the render objects, for automated shading audits. */
-    dbg: () => ({ renderer, scene, camera, lights, terrain, game, golfer, THREE }),
+    dbg: () => ({ renderer, scene, camera, lights, terrain, game, golfer, input, rig, THREE }),
 
     /** Jump straight to a hole by number (1-18), skipping the scorecard. */
     hole: (n) => {

@@ -172,7 +172,7 @@ export class SwipeSwing {
       // they actually pulled back, so a short backswing is a short stroke and
       // a full one is a full stroke — the arc you drew going back is the arc
       // you retrace coming down.
-      this.driveSpan = Math.max(70, this.peakDy * 0.92);
+      this.driveSpan = Math.max(58, this.peakDy * 0.70);
       this.onDriveBegin?.();
       this._drive(e.clientX, forward);
     }

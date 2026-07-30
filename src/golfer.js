@@ -441,7 +441,12 @@ export class Golfer {
   setCharge(v) {
     this.charge = clamp(v, 0, 1);
     if (this.state === 'back') {
-      this.thetaGoal = lerp(ADDRESS, BACK_MAX, easeOutCubic(this.charge));
+      // Near enough proportional. This ran through easeOutCubic, which puts
+      // 87% of the backswing into the first half of the pull — so every shot
+      // was very nearly a full swing whether you meant it or not, and there was
+      // no way to take it back short and hit it short. Taking it back is how a
+      // golfer chooses distance; the curve was quietly removing that choice.
+      this.thetaGoal = lerp(ADDRESS, BACK_MAX, Math.pow(this.charge, 0.9));
       this.hingeGoal = -0.95 * this.charge;
     }
   }
@@ -462,8 +467,41 @@ export class Golfer {
     this.driveGoal = 0;
     this.driveAuto = 0;
     this._peakVel = 0;
+    this._prevGoal = 0;
+    this._goalRate = 0;
+    this._peakGoalRate = 0;
     this.state = 'drive';
     return true;
+  }
+
+  /** Angular speed the player has generated, in radians per second. */
+  _clubSpeed() {
+    if (this.driveAuto) return this.driveAuto;
+    return this._peakGoalRate * (1.10 - this.thetaTop);
+  }
+
+  /**
+   * The shot this swing would produce if the ball were struck right now.
+   *
+   * Two ingredients, deliberately. How far you took it back is worth most of
+   * the shot on its own, so a full backswing at any sane tempo is always a
+   * decent strike — that is the difference between a game that rewards a good
+   * swing and one that punishes an imperfect one. Speed supplies the rest, and
+   * is what separates a good strike from a great one.
+   *
+   * Read live by the power meter, so the bar shows the shot rather than some
+   * internal quantity that happens to correlate with it.
+   */
+  get livePower() {
+    if (this.state !== 'drive') return this.power;
+    const backFrac = clamp((this.thetaTop - ADDRESS) / (BACK_MAX - ADDRESS), 0, 1);
+    const speedFrac = clamp((this._clubSpeed() - 2.5) / 11.0, 0, 1);
+    // Weighted toward the backswing, and the speed term reaches full at a pace
+    // an ordinary thumb can actually produce. Tuned by driving real pointer
+    // events through the real input path rather than by calling the golfer
+    // directly — event sampling is coarser and slower than a synthetic loop,
+    // and calibrating against the clean version made every real swing weak.
+    return clamp(0.55 * backFrac + 0.45 * speedFrac, 0.05, 1);
   }
 
   /** 0 at the top of the backswing, 1 with the club at the ball. */
@@ -503,6 +541,7 @@ export class Golfer {
     this.charge = 0; this.timer = 0;
     this._thetaVel = 0; this.hingeTop = 0; this._impactVel = 0;
     this.driveGoal = 0; this.driveAuto = 0; this._peakVel = 0;
+    this._prevGoal = 0; this._goalRate = 0; this._peakGoalRate = 0;
   }
 
   /**
@@ -573,7 +612,27 @@ export class Golfer {
           this.theta = damp(this.theta, goal, 22, dt);
         }
         if (dt > 1e-4) this._thetaVel = (this.theta - was) / dt;
-        this._peakVel = Math.max(this._peakVel, Math.abs(this._thetaVel));
+
+        // Read the *thumb*, not the club.
+        //
+        // The club is damped toward the thumb, and damping closes a fixed
+        // fraction of whatever gap it is given each frame — so the first frame
+        // of any downswing, however lazy, snaps a big chunk of a two-and-a-half
+        // radian gap and clocks a huge instantaneous speed. Taking the club's
+        // peak therefore measured the damping's eagerness rather than the
+        // player's, which is why gentle swings still launched it and why the
+        // result felt disconnected from what you did.
+        //
+        // How fast the *goal* advances is the honest measure: it is the thumb's
+        // speed, mapped through the arc the backswing set up.
+        if (dt > 1e-4 && !this.driveAuto) {
+          const rate = (this.driveGoal - (this._prevGoal ?? 0)) / dt;
+          // Light smoothing: pointer events arrive unevenly, and a single
+          // coarse frame should not decide the shot.
+          this._goalRate += (rate - this._goalRate) * clamp(dt * 14, 0, 1);
+          this._peakGoalRate = Math.max(this._peakGoalRate, this._goalRate);
+        }
+        this._prevGoal = this.driveGoal;
 
         // Wrist holds its cock through the first third of the way down and
         // releases into the ball — same shape as before, but on the player's
@@ -582,15 +641,16 @@ export class Golfer {
         this.hinge = lerp(this.hingeTop, 0, easeInOutSine(rel));
 
         if (this.theta >= 0) {
-          // Impact. Club speed is the shot — nothing else feeds into it, which
-          // is what makes the gesture worth performing rather than merely
-          // completing. The fastest the club got is a fairer reading of the
-          // swing than whatever one frame happened to catch at the crossing.
-          const speed = Math.max(Math.abs(this._thetaVel), this._peakVel * 0.88);
-          // Calibrated against real gesture speeds: a brisk quarter-second
-          // stroke is most of the club, a hurried one is all of it, and a
-          // slow deliberate one still gets a usable half rather than nothing.
-          this.power = clamp((speed - 3.0) / 22.0, 0.05, 1);
+          // Impact.
+          //
+          // Two ingredients, deliberately. How far you took it back is worth
+          // most of the shot on its own, so a full backswing at any sane tempo
+          // is always a decent strike — that is the difference between a game
+          // that rewards a good swing and one that punishes an imperfect one.
+          // Speed supplies the rest, and is what separates a good strike from
+          // a great one.
+          this.power = this.livePower;
+          const speed = Math.max(this._clubSpeed(), 5);
           this._impactVel = Math.max(speed, 5);
           this.state = 'through';
           this.timer = 0;
