@@ -63,7 +63,7 @@ export const DEFAULT_LOOK = {
   skin: 0xdcb98f,
   shirt: 0x3f56bd,
   trim: 0xa8896a,
-  trousers: 0xd7b78c,
+  trousers: 0xcaa77b,
   shoes: 0xa03a3a,
   cap: 0xcbad86,
   hair: 0x6f4a33,
@@ -331,25 +331,27 @@ export class Golfer {
 
     // ---- head ----
     this.head = new THREE.Group();
-    this.head.position.y = 0.30;
+    this.head.position.y = 0.325;
     this.torso.add(this.head);
 
     this._region('skin', this.head, [
-      { geo: new THREE.SphereGeometry(0.205, 30, 22), pos: [0, 0.150, 0], scale: [1.0, 1.02, 0.98] },
+      // Round, not egg-shaped. The slight vertical stretch was left over from
+      // the tall figure and reads as a jaw the reference does not have.
+      { geo: new THREE.SphereGeometry(0.208, 30, 22), pos: [0, 0.148, 0] },
       // neck
       { geo: new THREE.CylinderGeometry(0.062, 0.075, 0.09, 16), pos: [0, -0.020, 0] },
       // small round nose, proud of a skull that reaches x = -0.205
-      { geo: new THREE.SphereGeometry(0.030, 14, 11), pos: [-0.196, 0.142, 0] },
+      { geo: new THREE.SphereGeometry(0.029, 14, 11), pos: [-0.198, 0.132, 0] },
     ]);
     // Face: two dark ovals and a small mouth, sitting on the surface. No
     // rigging, no expression — the reference gets all of its character from
     // how simple this is, and anything more starts to fight it.
     this._weld(KIT.eye, this.head, [
-      { geo: new THREE.SphereGeometry(0.034, 14, 11), pos: [-0.190, 0.190, 0.072], scale: [0.55, 1.10, 0.85] },
-      { geo: new THREE.SphereGeometry(0.034, 14, 11), pos: [-0.190, 0.190, -0.072], scale: [0.55, 1.10, 0.85] },
+      { geo: new THREE.SphereGeometry(0.034, 14, 11), pos: [-0.193, 0.172, 0.073], scale: [0.55, 1.10, 0.85] },
+      { geo: new THREE.SphereGeometry(0.034, 14, 11), pos: [-0.193, 0.172, -0.073], scale: [0.55, 1.10, 0.85] },
     ]);
     this._weld(KIT.mouth, this.head, [
-      { geo: new THREE.SphereGeometry(0.030, 14, 10), pos: [-0.192, 0.088, 0], scale: [0.42, 0.40, 1.25] },
+      { geo: new THREE.SphereGeometry(0.030, 14, 10), pos: [-0.194, 0.082, 0], scale: [0.42, 0.40, 1.25] },
     ]);
 
     // Hair, hidden by default — the bucket hat covers it.
@@ -373,8 +375,9 @@ export class Golfer {
     this.headwear.bucket = new THREE.Group();
     this.head.add(this.headwear.bucket);
     this._region('cap', this.headwear.bucket, [
-      { geo: new THREE.CylinderGeometry(0.315, 0.300, 0.036, 30), pos: [0, 0.268, 0] },
-      { geo: new THREE.TorusGeometry(0.305, 0.028, 10, 30), pos: [0, 0.262, 0], rot: [Math.PI / 2, 0, 0] },
+      { geo: new THREE.CylinderGeometry(0.312, 0.296, 0.034, 30), pos: [0, 0.272, 0] },
+      // The rim rolls down a little — a soft hat, not a plate.
+      { geo: new THREE.TorusGeometry(0.302, 0.030, 10, 30), pos: [0, 0.262, 0], rot: [Math.PI / 2, 0, 0] },
       { geo: new THREE.SphereGeometry(0.202, 26, 18, 0, Math.PI * 2, 0, Math.PI * 0.60),
         pos: [0, 0.256, 0], scale: [1.0, 0.98, 1.0] },
       { geo: new THREE.CylinderGeometry(0.202, 0.212, 0.09, 26), pos: [0, 0.292, 0] },
@@ -422,14 +425,33 @@ export class Golfer {
     this.swingArm = new THREE.Group();
     this.swingPlane.add(this.swingArm);
 
-    // Soft tapered arms converging on the grip — no elbow, in keeping with a
-    // figure that has no hard edges anywhere else either.
-    this._region('skin', this.swingArm, [
-      { geo: new THREE.CapsuleGeometry(0.058, 0.16, 8, 16), pos: [0, -0.115, 0.072], rot: [-0.30, 0, 0] },
-      { geo: new THREE.CapsuleGeometry(0.058, 0.16, 8, 16), pos: [0, -0.115, -0.072], rot: [0.30, 0, 0] },
-    ]);
+    // Arms, each running from its own shoulder down to the grip.
+    //
+    // They were doing neither before. They attached at z = ±0.072 while the
+    // shoulder caps sit at ±0.135, and the swing plane is itself offset -0.05
+    // in z — so both arms emerged from the middle of the chest rather than from
+    // the shoulders. And their tilt was the wrong way round, which splayed them
+    // *outward* on the way down instead of converging on the club.
+    //
+    // The two are deliberately not mirror images. The plane offset means the
+    // far shoulder is a good deal further from the grip than the near one, so
+    // the lead arm is longer and more steeply angled — which is exactly what
+    // happens when a person puts both hands on the same club.
+    const shoulderZ = 0.135 - this.swingPlane.position.z - this.stance.position.z;
+    const arm = (topZ) => {
+      const dy = 0.23, dz = -topZ;                 // shoulder -> grip
+      const len = Math.hypot(dy, dz);
+      return {
+        geo: new THREE.CapsuleGeometry(0.048, Math.max(0.02, len - 0.096), 8, 16),
+        pos: [-0.030, -0.125, topZ / 2],
+        rot: [Math.atan2(topZ, dy), 0, 0],
+      };
+    };
+    this._region('skin', this.swingArm, [arm(shoulderZ), arm(shoulderZ - 0.27)]);
+    // Both hands together on the grip: one small blob, the way the reference
+    // reads them.
     this._region('glove', this.swingArm, [
-      { geo: new THREE.SphereGeometry(0.068, 16, 12), pos: [0, -0.238, 0], scale: [0.95, 1.20, 0.92] },
+      { geo: new THREE.SphereGeometry(0.062, 16, 12), pos: [-0.012, -0.268, 0], scale: [0.92, 1.30, 0.98] },
     ]);
 
     this.wrist = new THREE.Group();
@@ -441,7 +463,9 @@ export class Golfer {
     const shaftLen = CLUB_LEN - ARM_LEN;
     this._mesh(new THREE.CylinderGeometry(0.034, 0.042, shaftLen, 16), KIT.shaft, this.wrist,
       [0, -shaftLen / 2, 0]);
-    this._mesh(new THREE.CylinderGeometry(0.045, 0.042, 0.30, 16), KIT.grip, this.wrist, [0, -0.10, 0]);
+    // Short, and low enough that the hands sit *on* it rather than inside it —
+    // the grip used to run right up past the knuckles and swallow them.
+    this._mesh(new THREE.CylinderGeometry(0.043, 0.040, 0.20, 16), KIT.grip, this.wrist, [0, -0.135, 0]);
 
     // Ferrule and hosel, then the head. Three small pieces, but a club that
     // just ends in a blob is the first thing that reads as untooled.
