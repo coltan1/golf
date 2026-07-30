@@ -89,7 +89,10 @@ function disposeWorld() {
  * and outside the session, because having to restyle every visit would make
  * the whole feature a toy.
  */
-const LOOK_KEY = 'sunnylinks.look';
+// Versioned. A look saved before the figure was redesigned would load over the
+// new default and the redesign would simply not appear for anyone who had ever
+// opened the customiser — so the key moves with the design.
+const LOOK_KEY = 'sunnylinks.look.v2';
 
 function loadLook() {
   try {
@@ -622,7 +625,7 @@ window.golfer = {
   get presets() { return Object.keys(LOOK_PRESETS); },
   options: {
     colours: ['skin', 'shirt', 'trim', 'trousers', 'shoes', 'cap', 'hair', 'glove'],
-    headwear: ['cap', 'visor', 'none'],
+    headwear: ['bucket', 'cap', 'visor', 'none'],
     hairStyle: ['short', 'long', 'none'],
     shades: [true, false],
   },
