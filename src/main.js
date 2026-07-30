@@ -19,7 +19,7 @@ import {
   createTrees, createGrass, createClubhouse, createFlag, createTeeMarkers, createBridge,
   treeMapTexture,
 } from './props.js';
-import { Golfer } from './golfer.js';
+import { Golfer, DEFAULT_LOOK, LOOK_PRESETS } from './golfer.js';
 import { Ball, CLUBS, pickClub } from './ball.js';
 import { SwipeSwing } from './input.js';
 import { CameraRig } from './camerarig.js';
@@ -28,6 +28,7 @@ import { createSunRays, createButterflies, createMotes } from './ambience.js';
 import { FreeCam } from './freecam.js';
 import { Audio } from './audio.js';
 import { Hud, scoreName } from './hud.js';
+import { createKitPanel } from './kit.js';
 import { HOLES, TOTAL_PAR } from './holes.js';
 
 // ---------------------------------------------------------------- renderer
@@ -82,6 +83,27 @@ function disposeWorld() {
   worldGroup = null;
 }
 
+/**
+ * The player's look, kept outside the world so it survives a hole change —
+ * buildWorld throws the whole subtree away and makes a new Golfer each time —
+ * and outside the session, because having to restyle every visit would make
+ * the whole feature a toy.
+ */
+const LOOK_KEY = 'sunnylinks.look';
+
+function loadLook() {
+  try {
+    const raw = localStorage.getItem(LOOK_KEY);
+    return raw ? { ...DEFAULT_LOOK, ...JSON.parse(raw) } : { ...DEFAULT_LOOK };
+  } catch { return { ...DEFAULT_LOOK }; }
+}
+
+function saveLook(look) {
+  try { localStorage.setItem(LOOK_KEY, JSON.stringify(look)); } catch { /* private mode */ }
+}
+
+let playerLook = loadLook();
+
 function buildWorld() {
   const ramp = makeToonRamp();
   const groundRamp = makeGroundRamp();
@@ -117,7 +139,7 @@ function buildWorld() {
 
   flag = add(createFlag(ramp));
 
-  golfer = new Golfer(ramp);
+  golfer = new Golfer(ramp, playerLook);
   add(golfer.root);
 
   ball = new Ball(worldGroup, ramp);
@@ -134,6 +156,7 @@ function initOnce() {
   input = new SwipeSwing(renderer.domElement);
   freeCam = new FreeCam(camera, renderer.domElement);
   wireInput();
+  createKitPanel(window.golfer);
 }
 
 // ---------------------------------------------------------------- freecam
@@ -583,6 +606,41 @@ window.addEventListener('keydown', (e) => {
   const isF = e.code === 'KeyF' || e.key === 'f' || e.key === 'F';
   if (isF && !e.repeat && !e.metaKey && !e.ctrlKey) toggleFreeCam();
 });
+
+/**
+ * Customising the golfer.
+ *
+ *   golfer.set({ shirt: 0xff0000 })   any subset of DEFAULT_LOOK
+ *   golfer.preset('masters')          one of the ready-made looks
+ *   golfer.look                       what it currently is
+ *   golfer.options                    what can be changed, and to what
+ *
+ * Changes apply to the figure on screen straight away and are remembered.
+ */
+window.golfer = {
+  get look() { return { ...playerLook }; },
+  get presets() { return Object.keys(LOOK_PRESETS); },
+  options: {
+    colours: ['skin', 'shirt', 'trim', 'trousers', 'shoes', 'cap', 'hair', 'glove'],
+    headwear: ['cap', 'visor', 'none'],
+    hairStyle: ['short', 'long', 'none'],
+    shades: [true, false],
+  },
+  set(partial) {
+    playerLook = { ...playerLook, ...partial };
+    if (golfer) golfer.setLook(playerLook);
+    saveLook(playerLook);
+    return { ...playerLook };
+  },
+  preset(name) {
+    if (!LOOK_PRESETS[name]) return 'unknown preset — try ' + Object.keys(LOOK_PRESETS).join(', ');
+    playerLook = { ...DEFAULT_LOOK, ...LOOK_PRESETS[name] };
+    if (golfer) golfer.setLook(playerLook);
+    saveLook(playerLook);
+    return { ...playerLook };
+  },
+  reset() { return this.preset('classic'); },
+};
 
 /** freecam() toggles · freecam.goto(x,y,z) · freecam.lookAt(x,y,z) · freecam.off() */
 window.freecam = Object.assign(
