@@ -321,8 +321,13 @@ function launchShot(power) {
   rig.setMode('flight');
   aimLine.setVisible(false);
 
-  if (game.club === CLUBS.putter) audio.putt();
-  else audio.impact(power);
+  if (game.club === CLUBS.putter) audio.putt(power);
+  else if (game.lie === 'sand') audio.sand(power);
+  else {
+    audio.impact(power);
+    // Brush of the club through what it is standing in, on top of the strike.
+    if (game.lie === 'rough') audio.brush(0.5 + power * 0.5);
+  }
 
   const label = game.pending.tempo > 0.62 ? 'Pure strike' : power > 0.9 ? 'Big one' : null;
   if (label) hud.shot(label, 1.6);
@@ -407,6 +412,7 @@ function wireInput() {
 
   input.onDriveBegin = () => {
     if (game.state !== 'charging') return;
+    game.pending.whooshed = false;
     golfer.beginDrive();
   };
 
@@ -418,6 +424,13 @@ function wireInput() {
     golfer.driveTo(progress);
     game.pending.lateral = lateral;
     hud.setPower(golfer.livePower);
+    // The club has to be heard coming *before* it arrives. Firing this at
+    // impact, as it used to, put the swish and the strike in the same instant
+    // and the swing had no approach at all.
+    if (!game.pending.whooshed && progress > 0.30) {
+      game.pending.whooshed = true;
+      audio.whoosh(golfer.livePower);
+    }
   };
 
   input.onDriveEnd = ({ auto, lateral } = {}) => {
@@ -459,7 +472,6 @@ function wireHole() {
     game.state = 'swinging';
     game.pending.tempo = power;
     hud.showPower(false);
-    audio.whoosh(power);
     launchShot(power);
   };
   ball.onRest = () => onBallRest();
@@ -562,6 +574,9 @@ function frame() {
       game.state = 'ready';
       rig.setMode('address');
       const toPin = distToHole(ball.pos.x, ball.pos.z);
+      audio.step(game.lie === 'green' ? 1 : game.lie === 'fairway' ? 0.7 : 0.25);
+      setTimeout(() => audio.step(game.lie === 'green' ? 1 : 0.6), 260);
+      if (game.onTee) setTimeout(() => audio.tee(), 620);
       if (game.club === CLUBS.putter) hud.hint(`${Math.round(toPin * 3)} feet to the cup`, 3);
       else if (game.lie === 'sand') hud.hint('In the sand — swing a little harder', 3);
     }
