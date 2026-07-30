@@ -17,7 +17,12 @@ import * as THREE from 'three';
 import { clamp, lerp, damp, easeInOutSine, easeOutCubic, easeOutQuint } from './util.js';
 
 // --- rig landmarks -----------------------------------------------------------
-const HANDS = new THREE.Vector3(0.60, 1.05, 0);
+// Not the hands — the *shoulder pivot* the arms and club swing about. Raised
+// with the redesign: the new figure carries its shoulders at about 1.32, and
+// leaving this at the old 1.05 sprouted the arms out of the middle of the
+// chest. Everything downstream derives from it, so the club simply gets the
+// length a taller golfer's would.
+const HANDS = new THREE.Vector3(0.58, 1.32, 0);
 const BALL = new THREE.Vector3(0, 0.045, 0);
 const _d = BALL.clone().sub(HANDS);
 const CLUB_LEN = _d.length();
@@ -26,7 +31,7 @@ const PLANE_TILT = Math.asin(_d.x / CLUB_LEN); // tilts the swing plane off vert
 // --- swing shape -------------------------------------------------------------
 // At rest the club is soled just behind the ball, the way it actually would
 // be — which also stops the club head from hiding the ball at address.
-const ADDRESS = -0.38;
+const ADDRESS = -0.30;
 const BACK_MAX = -2.55;   // radians at the top of a full backswing
 const FINISH = 2.80;      // radians at the end of the follow-through
 const DOWN_DUR = 0.30;    // seconds, top → impact
@@ -34,31 +39,43 @@ const THROUGH_DUR = 0.55; // impact → finish
 const HOLD_DUR = 0.85;    // admire the shot
 const RETURN_DUR = 0.90;  // ease back to address
 
+/**
+ * Kit.
+ *
+ * Tournament dress rather than holiday dress: a white polo with a coral
+ * placket, charcoal trousers, a navy cap. Against a course that is almost
+ * entirely green and sand, white and near-black are the two values that read
+ * cleanly at any distance, and the coral is the only saturated thing on the
+ * figure so it is where the eye lands.
+ */
 const COL = {
-  skin: 0xf5c69f,
-  shirt: 0xff8f63,
-  collar: 0xfff4ec,
-  shorts: 0xf8f8f6,
-  visor: 0xffd05c,
-  brim: 0xfff6df,
-  hair: 0x6f4a33,
-  shades: 0x33454f,
-  shoe: 0xffffff,
-  sole: 0xff8f63,
+  skin: 0xf0bd93,
+  skinShade: 0xdca67c,
+  polo: 0xfbfbf9,
+  poloTrim: 0xf4744e,
+  collar: 0xffffff,
+  trouser: 0x3d4652,
+  trouserDark: 0x333b46,
+  cap: 0x24384f,
+  capBrim: 0x1b2a3c,
+  hair: 0x5c3d29,
+  shades: 0x2b3a44,
+  lens: 0x8fb6c4,
+  shoe: 0xfafafa,
+  shoeTrim: 0x24384f,
+  sole: 0xe4e7ea,
+  sock: 0xfdfdfb,
+  glove: 0xf6f8fa,
+  lace: 0xdfe3e7,
+  spike: 0x9aa4ac,
+  belt: 0x2a3038,
+  buckle: 0xcfc08a,
+  mouth: 0xc07a6c,
   shaft: 0xdde3e8,
   head: 0xc3ccd3,
-  grip: 0x333b42,
-  belt: 0x4a5560,
-  buckle: 0xd8c98a,
+  grip: 0x2b3238,
   ferrule: 0x2b3238,
   face: 0xdfe6ea,
-  sock: 0xfdfdfb,
-  glove: 0xf4f6f8,
-  lace: 0xe6e9ec,
-  spike: 0x98a3ab,
-  brow: 0x5a3b28,
-  mouth: 0xc9776a,
-  seam: 0xef7f52,
 };
 
 export class Golfer {
@@ -82,6 +99,8 @@ export class Golfer {
     this.thetaVel0 = 0;
     this.hingeTop = 0;
     this._impactVel = 0;
+    this.driveGoal = 0;
+    this.driveAuto = 0;
     this.onImpact = null;
     this.popT = 1; // 0→1 scale-in when the golfer walks up to a new lie
 
@@ -163,60 +182,80 @@ export class Golfer {
     this.root.add(this.scaler);
 
     // Stance: feet planted either side of the ball, body facing -X.
+    //
+    // Proportions are the redesign. The old figure was about three and a half
+    // heads tall, which reads as a toddler holding a driver — fine for a
+    // mascot, but it fights an art direction that is otherwise trying to look
+    // like a real golf course. This one is close to six heads, with the mass in
+    // the shoulders and legs long enough for an athletic posture to be legible.
+    //
+    // One fixed point constrains all of it: the hands sit at y = 1.05, because
+    // that is where the club length was measured from. Everything else hangs
+    // around that.
     this.stance = new THREE.Group();
     this.stance.position.set(0.80, 0, 0.05);
     this.scaler.add(this.stance);
 
-    // ---- legs: hip → knee → ankle, one chain per side ----
-    // Jointed rather than a single capsule, so the knees can take the weight
-    // shift and the trail heel can come off the ground at the finish. Those two
-    // things are most of what separates a golf swing from a torso spinning on a
-    // pole, and neither is possible on a rigid leg.
+    // ---- legs: hip -> knee -> ankle, one chain per side ----
     this.legs = new THREE.Group();
     this.stance.add(this.legs);
     this.legRig = [];
     for (const s of [-1, 1]) {
       const hip = new THREE.Group();
-      hip.position.set(0, 0.60, s * 0.20);
-      hip.rotation.x = s * 0.055;
+      hip.position.set(0, 0.86, s * 0.17);
+      hip.rotation.x = s * 0.05;
       this.legs.add(hip);
-      this._weld(COL.skin, hip, [
-        { geo: new THREE.CapsuleGeometry(0.134, 0.15, 10, 26), pos: [0, -0.12, 0] },
-        { geo: new THREE.SphereGeometry(0.126, 22, 16), pos: [0, -0.235, 0] },   // kneecap
+
+      // Thigh: trousers tapering to the knee, with a crease down the front.
+      this._weld(COL.trouser, hip, [
+        { geo: new THREE.CylinderGeometry(0.132, 0.108, 0.40, 22), pos: [0, -0.20, 0] },
+        { geo: new THREE.SphereGeometry(0.132, 20, 15), pos: [0, -0.01, 0] },
+        { geo: new THREE.SphereGeometry(0.106, 18, 14), pos: [0, -0.41, 0] },
+      ]);
+      this._weld(COL.trouserDark, hip, [
+        { geo: new THREE.BoxGeometry(0.012, 0.38, 0.020), pos: [-0.104, -0.20, 0] },
       ]);
 
       const knee = new THREE.Group();
-      knee.position.y = -0.235;
+      knee.position.y = -0.41;
       hip.add(knee);
-      this._weld(COL.skin, knee, [
-        { geo: new THREE.CapsuleGeometry(0.112, 0.13, 10, 24), pos: [0, -0.12, 0] },  // calf
-        { geo: new THREE.SphereGeometry(0.118, 18, 14), pos: [0.03, -0.07, 0], scale: [0.8, 1.1, 0.9] },
-        { geo: new THREE.SphereGeometry(0.082, 18, 14), pos: [0, -0.245, 0] },        // ankle
+      // Calf, then the trouser breaking over the shoe.
+      this._weld(COL.trouser, knee, [
+        { geo: new THREE.CylinderGeometry(0.104, 0.086, 0.34, 22), pos: [0, -0.17, 0] },
+        { geo: new THREE.CylinderGeometry(0.092, 0.098, 0.07, 22), pos: [0, -0.355, 0.008] },
+      ]);
+      this._weld(COL.trouserDark, knee, [
+        { geo: new THREE.BoxGeometry(0.012, 0.32, 0.020), pos: [-0.088, -0.17, 0] },
       ]);
       this._weld(COL.sock, knee, [
-        { geo: new THREE.CylinderGeometry(0.098, 0.092, 0.115, 26), pos: [0, -0.215, 0] },
-        { geo: new THREE.TorusGeometry(0.096, 0.016, 10, 26), pos: [0, -0.158, 0], rot: [Math.PI / 2, 0, 0] },
+        { geo: new THREE.CylinderGeometry(0.072, 0.070, 0.07, 18), pos: [0, -0.415, 0] },
       ]);
 
       const foot = new THREE.Group();
-      foot.position.y = -0.275;
+      foot.position.y = -0.45;
       knee.add(foot);
+      // Golf shoe: low upper, toe cap, heel counter, welted sole.
       this._weld(COL.shoe, foot, [
-        { geo: new THREE.SphereGeometry(0.20, 26, 18), pos: [-0.055, 0.05, 0], scale: [1.30, 0.58, 0.86] },
-        { geo: new THREE.SphereGeometry(0.115, 20, 14), pos: [0.085, 0.062, 0], scale: [0.92, 0.9, 0.96] },
-        { geo: new THREE.SphereGeometry(0.075, 16, 12), pos: [-0.20, 0.045, 0], scale: [0.9, 0.7, 1.0] },
+        { geo: new THREE.SphereGeometry(0.155, 24, 17), pos: [-0.045, 0.058, 0], scale: [1.45, 0.62, 0.90] },
+        { geo: new THREE.SphereGeometry(0.092, 18, 13), pos: [0.075, 0.072, 0], scale: [0.95, 1.00, 0.98] },
+        { geo: new THREE.SphereGeometry(0.062, 16, 12), pos: [-0.185, 0.048, 0], scale: [0.95, 0.72, 1.00] },
+      ]);
+      this._weld(COL.shoeTrim, foot, [
+        { geo: new THREE.TorusGeometry(0.078, 0.016, 10, 24), pos: [0.030, 0.100, 0], rot: [Math.PI / 2, 0, 0.10] },
+        { geo: new THREE.BoxGeometry(0.075, 0.030, 0.016), pos: [-0.10, 0.055, 0.082], rot: [0, 0, 0.08] },
+        { geo: new THREE.BoxGeometry(0.075, 0.030, 0.016), pos: [-0.10, 0.055, -0.082], rot: [0, 0, 0.08] },
       ]);
       this._weld(COL.sole, foot, [
-        { geo: new THREE.CylinderGeometry(0.196, 0.186, 0.048, 30), pos: [-0.055, 0.014, 0], scale: [1.26, 1, 0.86] },
+        { geo: new THREE.CylinderGeometry(0.152, 0.144, 0.040, 26), pos: [-0.045, 0.018, 0], scale: [1.42, 1, 0.90] },
       ]);
       this._weld(COL.lace, foot, [
-        { geo: new THREE.BoxGeometry(0.052, 0.015, 0.095), pos: [-0.095, 0.115, 0], rot: [0, 0, 0.1] },
-        { geo: new THREE.BoxGeometry(0.052, 0.015, 0.088), pos: [-0.163, 0.098, 0], rot: [0, 0, 0.16] },
+        { geo: new THREE.BoxGeometry(0.044, 0.013, 0.076), pos: [-0.055, 0.104, 0], rot: [0, 0, 0.06] },
+        { geo: new THREE.BoxGeometry(0.044, 0.013, 0.070), pos: [-0.115, 0.093, 0], rot: [0, 0, 0.12] },
       ]);
       const spikes = [];
-      for (const dx of [-0.185, -0.055, 0.075]) {
-        for (const dz of [-0.055, 0.055]) {
-          spikes.push({ geo: new THREE.CylinderGeometry(0.015, 0.012, 0.026, 8), pos: [dx, -0.014, dz] });
+      for (const dx of [-0.155, -0.045, 0.065]) {
+        for (const dz of [-0.045, 0.045]) {
+          spikes.push({ geo: new THREE.CylinderGeometry(0.013, 0.010, 0.022, 7), pos: [dx, -0.005, dz] });
         }
       }
       this._weld(COL.spike, foot, spikes);
@@ -224,115 +263,94 @@ export class Golfer {
       this.legRig.push({ s, hip, knee, foot });
     }
 
-    // ---- hips → torso → head chain (each rotates a little more than the last) ----
+    // ---- hips -> torso -> head ----
     this.hips = new THREE.Group();
-    this.hips.position.y = 0.55;
+    this.hips.position.y = 0.86;
     this.stance.add(this.hips);
-    this._weld(COL.shorts, this.hips, [
-      { geo: new THREE.SphereGeometry(0.30, 32, 24), pos: [0, 0.02, 0], scale: [0.92, 0.78, 1.0] },
-      // Short legs, so the shorts read as tailored rather than painted on.
-      { geo: new THREE.CylinderGeometry(0.145, 0.152, 0.13, 24), pos: [0, -0.15, 0.145], rot: [0.06, 0, 0] },
-      { geo: new THREE.CylinderGeometry(0.145, 0.152, 0.13, 24), pos: [0, -0.15, -0.145], rot: [-0.06, 0, 0] },
-      { geo: new THREE.BoxGeometry(0.02, 0.20, 0.012), pos: [-0.275, -0.02, 0] },   // fly seam
+    this._weld(COL.trouser, this.hips, [
+      { geo: new THREE.SphereGeometry(0.215, 28, 20), pos: [0, 0.045, 0], scale: [0.95, 0.92, 1.06] },
+      { geo: new THREE.CylinderGeometry(0.205, 0.198, 0.14, 26), pos: [0, 0.13, 0], scale: [0.96, 1, 1.05] },
+    ]);
+    this._weld(COL.belt, this.hips, [
+      { geo: new THREE.CylinderGeometry(0.208, 0.208, 0.055, 30), pos: [0, 0.185, 0], scale: [0.96, 1, 1.05] },
+    ]);
+    this._weld(COL.buckle, this.hips, [
+      { geo: new THREE.BoxGeometry(0.055, 0.048, 0.020), pos: [-0.200, 0.185, 0] },
     ]);
 
     this.torso = new THREE.Group();
-    this.torso.position.y = 0.14;
+    this.torso.position.y = 0.16;
     this.hips.add(this.torso);
 
-    // The chest stays its own mesh — update() breathes with its scale.
-    this.chest = this._mesh(new THREE.SphereGeometry(0.36, 36, 26), COL.shirt, this.torso, [0, 0.20, 0]);
-    this.chest.scale.set(0.86, 1.02, 1.0);
-    // Shoulder caps and short sleeves, welded into one piece with the placket.
-    this._weld(COL.shirt, this.torso, [
-      { geo: new THREE.SphereGeometry(0.145, 22, 16), pos: [0, 0.36, 0.26], scale: [0.95, 0.9, 1.05] },
-      { geo: new THREE.SphereGeometry(0.145, 22, 16), pos: [0, 0.36, -0.26], scale: [0.95, 0.9, 1.05] },
-      { geo: new THREE.CylinderGeometry(0.128, 0.138, 0.20, 24), pos: [0, 0.24, 0.30], rot: [0.20, 0, 0] },
-      { geo: new THREE.CylinderGeometry(0.128, 0.138, 0.20, 24), pos: [0, 0.24, -0.30], rot: [-0.20, 0, 0] },
-      { geo: new THREE.BoxGeometry(0.055, 0.30, 0.075), pos: [-0.30, 0.24, 0], rot: [0, 0, -0.06] },
+    // The chest stays its own mesh — update() breathes with its scale. A
+    // tapered capsule rather than a sphere: the V from shoulder down to waist
+    // is most of what makes a figure read as athletic instead of as a snowman.
+    this.chest = this._mesh(new THREE.CapsuleGeometry(0.205, 0.20, 12, 28), COL.polo, this.torso, [0, 0.14, 0]);
+    this.chest.scale.set(0.94, 1.0, 1.14);
+
+    this._weld(COL.polo, this.torso, [
+      { geo: new THREE.SphereGeometry(0.115, 22, 16), pos: [0, 0.255, 0.185], scale: [1.0, 0.95, 1.05] },
+      { geo: new THREE.SphereGeometry(0.115, 22, 16), pos: [0, 0.255, -0.185], scale: [1.0, 0.95, 1.05] },
+      { geo: new THREE.CylinderGeometry(0.098, 0.104, 0.16, 22), pos: [0, 0.175, 0.215], rot: [0.16, 0, 0] },
+      { geo: new THREE.CylinderGeometry(0.098, 0.104, 0.16, 22), pos: [0, 0.175, -0.215], rot: [-0.16, 0, 0] },
     ]);
-    // Sleeve hems and three buttons, in the trim colour.
+    // Placket and sleeve trim — the only saturated colour on the figure, so it
+    // is where the eye lands.
+    this._weld(COL.poloTrim, this.torso, [
+      { geo: new THREE.BoxGeometry(0.040, 0.19, 0.055), pos: [-0.196, 0.20, 0], rot: [0, 0, -0.05] },
+      { geo: new THREE.TorusGeometry(0.100, 0.014, 10, 24), pos: [0, 0.098, 0.228], rot: [Math.PI / 2 + 0.16, 0, 0] },
+      { geo: new THREE.TorusGeometry(0.100, 0.014, 10, 24), pos: [0, 0.098, -0.228], rot: [Math.PI / 2 - 0.16, 0, 0] },
+    ]);
     this._weld(COL.collar, this.torso, [
-      { geo: new THREE.TorusGeometry(0.132, 0.020, 10, 26), pos: [0, 0.145, 0.325], rot: [Math.PI / 2 + 0.20, 0, 0] },
-      { geo: new THREE.TorusGeometry(0.132, 0.020, 10, 26), pos: [0, 0.145, -0.325], rot: [Math.PI / 2 - 0.20, 0, 0] },
-      { geo: new THREE.SphereGeometry(0.021, 10, 8), pos: [-0.335, 0.335, 0] },
-      { geo: new THREE.SphereGeometry(0.021, 10, 8), pos: [-0.338, 0.255, 0] },
-      { geo: new THREE.SphereGeometry(0.021, 10, 8), pos: [-0.330, 0.175, 0] },
-    ]);
-    // A soft collar reads as a polo without any extra geometry cost.
-    const collar = this._mesh(new THREE.TorusGeometry(0.155, 0.055, 16, 40), COL.collar, this.torso, [0, 0.50, 0]);
-    collar.rotation.x = Math.PI / 2;
-    // Belt at the waist: a small band, but it separates shirt from shorts and
-    // stops the torso reading as one moulded lump.
-    const belt = this._mesh(new THREE.CylinderGeometry(0.30, 0.30, 0.085, 32), COL.belt, this.torso, [0, -0.11, 0]);
-    belt.scale.set(0.94, 1, 1.02);
-    this._weld(COL.buckle, this.torso, [
-      { geo: new THREE.BoxGeometry(0.085, 0.075, 0.03), pos: [-0.28, -0.11, 0] },
-      { geo: new THREE.TorusGeometry(0.030, 0.008, 8, 18), pos: [-0.283, -0.11, 0], rot: [0, Math.PI / 2, 0] },
-    ]);
-    this._weld(COL.belt, this.torso, [
-      { geo: new THREE.BoxGeometry(0.035, 0.105, 0.055), pos: [-0.20, -0.11, 0.21] },
-      { geo: new THREE.BoxGeometry(0.035, 0.105, 0.055), pos: [-0.20, -0.11, -0.21] },
-      { geo: new THREE.BoxGeometry(0.035, 0.105, 0.055), pos: [0.26, -0.11, 0.10] },
-      { geo: new THREE.BoxGeometry(0.035, 0.105, 0.055), pos: [0.26, -0.11, -0.10] },
+      { geo: new THREE.TorusGeometry(0.108, 0.038, 14, 32), pos: [0, 0.325, 0], rot: [Math.PI / 2, 0, 0], scale: [1, 1.06, 1] },
     ]);
 
     this.head = new THREE.Group();
-    this.head.position.y = 0.60;
+    this.head.position.y = 0.42;
     this.torso.add(this.head);
-    // Skull, jaw, ears, nose and neck, welded. Individually these are tiny
-    // pieces of geometry, but a head that is one sphere is the single thing
-    // that reads most strongly as unfinished, whatever else is going on.
+
+    // Skull, jaw, ears, neck. Smaller against the body than before and longer
+    // than it is wide, which is the other half of leaving mascot proportions.
     this._weld(COL.skin, this.head, [
-      { geo: new THREE.SphereGeometry(0.30, 40, 28), pos: [0, 0.24, 0] },
-      // jaw and chin, pulled forward and down off the skull
-      { geo: new THREE.SphereGeometry(0.215, 28, 20), pos: [-0.055, 0.115, 0], scale: [1.02, 0.86, 0.94] },
-      { geo: new THREE.SphereGeometry(0.085, 18, 14), pos: [-0.175, 0.085, 0], scale: [0.95, 0.8, 0.9] },
-      // ears
-      { geo: new THREE.SphereGeometry(0.072, 16, 12), pos: [0.035, 0.235, 0.275], scale: [0.75, 1.15, 0.5] },
-      { geo: new THREE.SphereGeometry(0.072, 16, 12), pos: [0.035, 0.235, -0.275], scale: [0.75, 1.15, 0.5] },
-      // Nose, sitting below the sunglasses and proud of both the skull and the
-      // jaw — each of which reaches about x = -0.28, so anything shallower than
-      // this is simply inside the head and invisible.
-      { geo: new THREE.SphereGeometry(0.052, 16, 12), pos: [-0.300, 0.150, 0], scale: [1.15, 0.90, 0.80] },
-      // neck
-      { geo: new THREE.CylinderGeometry(0.115, 0.135, 0.16, 22), pos: [0.01, -0.03, 0] },
+      { geo: new THREE.SphereGeometry(0.148, 32, 24), pos: [0, 0.115, 0], scale: [1.0, 1.10, 0.96] },
+      { geo: new THREE.SphereGeometry(0.118, 24, 18), pos: [-0.028, 0.045, 0], scale: [1.02, 0.92, 0.90] },
+      { geo: new THREE.SphereGeometry(0.048, 14, 11), pos: [-0.088, 0.012, 0], scale: [0.95, 0.80, 0.85] },
+      { geo: new THREE.SphereGeometry(0.036, 14, 10), pos: [0.020, 0.108, 0.140], scale: [0.70, 1.20, 0.55] },
+      { geo: new THREE.SphereGeometry(0.036, 14, 10), pos: [0.020, 0.108, -0.140], scale: [0.70, 1.20, 0.55] },
+      { geo: new THREE.CylinderGeometry(0.062, 0.076, 0.10, 20), pos: [0.005, -0.055, 0] },
+      // Nose, proud of the jaw — which reaches about x = -0.15, so anything
+      // shallower than that is simply inside the head and invisible.
+      { geo: new THREE.SphereGeometry(0.030, 16, 12), pos: [-0.152, 0.078, 0], scale: [1.10, 0.90, 0.80] },
     ]);
-    // Brows and mouth. Flat colour on the surface — no rigging, but it gives
-    // the face a direction, which is what makes it look at the ball.
-    // No brows — they would sit behind the sunglasses, which reach further
-    // forward than the skull does. The mouth has to clear the chin.
     this._weld(COL.mouth, this.head, [
-      { geo: new THREE.SphereGeometry(0.040, 16, 12), pos: [-0.272, 0.072, 0], scale: [0.55, 0.42, 1.30] },
+      { geo: new THREE.SphereGeometry(0.024, 14, 10), pos: [-0.138, 0.018, 0], scale: [0.55, 0.42, 1.25] },
     ]);
-    // Hair: a back mass plus temple tufts under the visor band.
     this._weld(COL.hair, this.head, [
-      { geo: new THREE.SphereGeometry(0.19, 24, 18), pos: [0.20, 0.20, 0], scale: [0.75, 0.85, 1.0] },
-      { geo: new THREE.SphereGeometry(0.145, 20, 14), pos: [0.155, 0.30, 0.155], scale: [0.8, 0.7, 0.85] },
-      { geo: new THREE.SphereGeometry(0.145, 20, 14), pos: [0.155, 0.30, -0.155], scale: [0.8, 0.7, 0.85] },
-      { geo: new THREE.SphereGeometry(0.10, 16, 12), pos: [0.055, 0.255, 0.245], scale: [0.9, 0.8, 0.6] },
-      { geo: new THREE.SphereGeometry(0.10, 16, 12), pos: [0.055, 0.255, -0.245], scale: [0.9, 0.8, 0.6] },
+      { geo: new THREE.SphereGeometry(0.128, 22, 16), pos: [0.052, 0.128, 0], scale: [0.90, 0.92, 1.02] },
+      { geo: new THREE.SphereGeometry(0.058, 16, 12), pos: [0.030, 0.058, 0.126], scale: [0.90, 0.85, 0.60] },
+      { geo: new THREE.SphereGeometry(0.058, 16, 12), pos: [0.030, 0.058, -0.126], scale: [0.90, 0.85, 0.60] },
     ]);
-    // visor: band + brim, tipped forward over the eyes
-    const band = this._mesh(new THREE.CylinderGeometry(0.305, 0.30, 0.14, 44, 1, true), COL.visor,
-      this.head, [0, 0.36, 0], { side: THREE.DoubleSide });
-    band.rotation.z = 0.10;
-    const brim = this._mesh(new THREE.CylinderGeometry(0.40, 0.40, 0.045, 44), COL.brim, this.head,
-      [-0.20, 0.33, 0]);
-    brim.scale.set(0.62, 1, 1.0);
-    brim.rotation.z = 0.22;
-    // Sunglasses: a wrapped frame with two lenses set into it, rather than one
-    // flattened band. Still no facial rigging, but the lenses catch the light
-    // separately from the frame, which is what makes them read as glass.
+
+    // Cap instead of a visor: rounded crown, curved peak, button on top.
+    this._weld(COL.cap, this.head, [
+      { geo: new THREE.SphereGeometry(0.156, 30, 20, 0, Math.PI * 2, 0, Math.PI * 0.56), pos: [0, 0.112, 0], scale: [1.0, 1.02, 0.99] },
+      { geo: new THREE.SphereGeometry(0.020, 12, 10), pos: [0, 0.266, 0] },
+      { geo: new THREE.TorusGeometry(0.150, 0.016, 10, 30), pos: [0, 0.106, 0], rot: [Math.PI / 2, 0, 0] },
+    ]);
+    this._weld(COL.capBrim, this.head, [
+      { geo: new THREE.CylinderGeometry(0.150, 0.150, 0.026, 30, 1, false, Math.PI * 0.62, Math.PI * 0.76),
+        pos: [-0.050, 0.096, 0], rot: [0, 0, 0.20], scale: [1.34, 1, 1.02] },
+    ]);
+
+    // Sunglasses: frame plus two lenses, sitting on the nose.
     this._weld(COL.shades, this.head, [
-      { geo: new THREE.SphereGeometry(0.30, 32, 24), pos: [-0.045, 0.225, 0], scale: [0.99, 0.175, 1.02] },
-      // arms of the frame, running back to the ears
-      { geo: new THREE.BoxGeometry(0.28, 0.028, 0.022), pos: [0.055, 0.235, 0.255], rot: [0, -0.12, 0] },
-      { geo: new THREE.BoxGeometry(0.28, 0.028, 0.022), pos: [0.055, 0.235, -0.255], rot: [0, 0.12, 0] },
+      { geo: new THREE.SphereGeometry(0.150, 26, 18), pos: [-0.022, 0.090, 0], scale: [0.99, 0.165, 1.02] },
+      { geo: new THREE.BoxGeometry(0.14, 0.018, 0.014), pos: [0.038, 0.098, 0.132], rot: [0, -0.10, 0] },
+      { geo: new THREE.BoxGeometry(0.14, 0.018, 0.014), pos: [0.038, 0.098, -0.132], rot: [0, 0.10, 0] },
     ]);
-    this._weld(COL.face, this.head, [
-      { geo: new THREE.SphereGeometry(0.30, 28, 20), pos: [-0.062, 0.228, 0.105], scale: [0.97, 0.115, 0.42] },
-      { geo: new THREE.SphereGeometry(0.30, 28, 20), pos: [-0.062, 0.228, -0.105], scale: [0.97, 0.115, 0.42] },
+    this._weld(COL.lens, this.head, [
+      { geo: new THREE.SphereGeometry(0.150, 22, 16), pos: [-0.030, 0.092, 0.052], scale: [0.97, 0.108, 0.40] },
+      { geo: new THREE.SphereGeometry(0.150, 22, 16), pos: [-0.030, 0.092, -0.052], scale: [0.97, 0.108, 0.40] },
     ]);
 
     // ---- swing assembly: plane → arm → wrist → club ----
@@ -344,29 +362,28 @@ export class Golfer {
     this.swingArm = new THREE.Group();
     this.swingPlane.add(this.swingArm);
 
-    // Arms with an elbow in them, converging on the grip.
+    // Arms: upper arm, elbow, forearm, converging from the shoulders onto the
+    // grip. Slimmer than the old mitten pair, in keeping with a figure that is
+    // now built like an adult.
     const armParts = [];
     for (const s of [-1, 1]) {
       armParts.push(
-        // upper arm
-        { geo: new THREE.CapsuleGeometry(0.104, 0.15, 10, 24), pos: [0, -0.115, s * 0.155], rot: [-s * 0.30, 0, 0] },
-        // elbow
-        { geo: new THREE.SphereGeometry(0.098, 18, 14), pos: [0, -0.225, s * 0.135] },
-        // forearm, tapering into the hands
-        { geo: new THREE.CapsuleGeometry(0.086, 0.16, 10, 24), pos: [0, -0.335, s * 0.085], rot: [-s * 0.34, 0, 0] },
+        { geo: new THREE.CapsuleGeometry(0.070, 0.14, 10, 22), pos: [0, -0.105, s * 0.140], rot: [-s * 0.26, 0, 0] },
+        { geo: new THREE.SphereGeometry(0.066, 16, 12), pos: [0, -0.225, s * 0.105] },
+        { geo: new THREE.CapsuleGeometry(0.058, 0.15, 10, 22), pos: [0, -0.330, s * 0.062], rot: [-s * 0.28, 0, 0] },
       );
     }
     this._weld(COL.skin, this.swingArm, armParts);
-    // Both hands on the grip: a glove on the lead hand, bare on the trail,
-    // with a thumb apiece. It is a small thing but the hands are the closest
-    // part of the figure to the camera at address.
+    // Both hands on the grip, a glove on the lead one and a thumb apiece. The
+    // hands are the closest part of the figure to the camera at address, so
+    // they are worth the geometry.
     this._weld(COL.glove, this.swingArm, [
-      { geo: new THREE.SphereGeometry(0.108, 22, 16), pos: [0, -0.445, 0.045], scale: [0.95, 1.15, 0.85] },
-      { geo: new THREE.CapsuleGeometry(0.030, 0.055, 8, 14), pos: [-0.06, -0.425, 0.055], rot: [0, 0, 0.5] },
+      { geo: new THREE.SphereGeometry(0.076, 20, 14), pos: [0, -0.425, 0.036], scale: [0.95, 1.20, 0.86] },
+      { geo: new THREE.CapsuleGeometry(0.023, 0.046, 8, 12), pos: [-0.046, -0.408, 0.044], rot: [0, 0, 0.52] },
     ]);
     this._weld(COL.skin, this.swingArm, [
-      { geo: new THREE.SphereGeometry(0.104, 22, 16), pos: [0, -0.49, -0.035], scale: [0.95, 1.1, 0.85] },
-      { geo: new THREE.CapsuleGeometry(0.028, 0.05, 8, 14), pos: [-0.058, -0.475, -0.03], rot: [0, 0, 0.5] },
+      { geo: new THREE.SphereGeometry(0.073, 20, 14), pos: [0, -0.466, -0.030], scale: [0.95, 1.14, 0.86] },
+      { geo: new THREE.CapsuleGeometry(0.022, 0.042, 8, 12), pos: [-0.044, -0.452, -0.026], rot: [0, 0, 0.52] },
     ]);
 
     // Wrist hinge lives between the hands and the shaft — this is the detail
@@ -429,22 +446,42 @@ export class Golfer {
     }
   }
 
-  release(power) {
+  /**
+   * Hand the club over to the player for the way down.
+   *
+   * There is no timed downswing any more. `driveTo()` puts the club where the
+   * thumb says it is, and impact happens when the club arrives at the ball
+   * rather than when a clock runs out — so the power of the shot is the speed
+   * the player actually generated, and a swing that stalls halfway is a swing
+   * that stalls halfway.
+   */
+  beginDrive() {
     if (this.state !== 'back') return false;
-    this.power = clamp(power, 0, 1);
     this.thetaTop = this.theta;
-    // Carry the club's actual state across the transition instead of
-    // re-deriving it. Both of these were being thrown away, and that is what
-    // made the release feel like a mechanism rather than a swing.
-    this.thetaVel0 = this._thetaVel;
     this.hingeTop = this.hinge;
-    this.state = 'down';
-    this.timer = 0;
+    this.driveGoal = 0;
+    this.driveAuto = 0;
+    this._peakVel = 0;
+    this.state = 'drive';
     return true;
   }
 
+  /** 0 at the top of the backswing, 1 with the club at the ball. */
+  driveTo(p) {
+    if (this.state === 'drive' && !this.driveAuto) this.driveGoal = clamp(p, 0, 1);
+  }
+
+  /**
+   * Finish the swing without the player: thumb lifted, or a keyboard swing,
+   * which has no downswing gesture to give. `vel` is in radians per second.
+   */
+  coastDrive(vel) {
+    if (this.state !== 'drive') return;
+    this.driveAuto = Math.max(4.5, vel || 0);
+  }
+
   cancel() {
-    if (this.state !== 'back') return;
+    if (this.state !== 'back' && this.state !== 'drive') return;
     this.state = 'return';
     this.timer = 0;
     this._returnFrom = this.theta;
@@ -452,7 +489,10 @@ export class Golfer {
     this.charge = 0;
   }
 
-  get isSwinging() { return this.state === 'down' || this.state === 'through' || this.state === 'hold'; }
+  get isSwinging() {
+    return this.state === 'drive' || this.state === 'down'
+        || this.state === 'through' || this.state === 'hold';
+  }
   get isBusy() { return this.state !== 'idle'; }
 
   /** Snap straight back to address — used when walking up to the next lie. */
@@ -462,6 +502,7 @@ export class Golfer {
     this.hinge = 0; this.hingeGoal = 0;
     this.charge = 0; this.timer = 0;
     this._thetaVel = 0; this.hingeTop = 0; this._impactVel = 0;
+    this.driveGoal = 0; this.driveAuto = 0; this._peakVel = 0;
   }
 
   /**
@@ -495,7 +536,10 @@ export class Golfer {
       this.popT = Math.min(1, this.popT + dt / 0.45);
       const s = easeOutQuint(this.popT);
       this.scaler.scale.setScalar(lerp(0.001, 1, s));
-      this.scaler.position.y = lerp(0.5, 0, 1 - s) * 0.6;
+      // lerp(0.5, 0, 1 - s), which this was, evaluates to 0.5 at s = 1 — so the
+      // pop finished by leaving the golfer parked a third of a yard in the air,
+      // permanently. It wants to *start* high and settle to nothing.
+      this.scaler.position.y = lerp(0.5, 0, s) * 0.6;
     }
 
     switch (this.state) {
@@ -507,6 +551,52 @@ export class Golfer {
         // Kept so the downswing can start at the speed the club is already
         // travelling, rather than from rest.
         if (dt > 1e-4) this._thetaVel = (this.theta - was) / dt;
+        break;
+      }
+
+      case 'drive': {
+        const was = this.theta;
+        if (this.driveAuto) {
+          this.theta += this.driveAuto * dt;
+          this.driveGoal = clamp((this.theta - this.thetaTop) / (0.12 - this.thetaTop), 0, 1);
+        } else {
+          // The goal runs well *past* the ball, not just barely past it.
+          //
+          // Damping is asymptotic, so aiming at the ball meant the club spent
+          // its last few frames decelerating onto it — arriving at a crawl no
+          // matter how fast the thumb had moved, which made every shot come
+          // out at the minimum. Aiming a radian beyond means the ball is struck
+          // around three quarters of the way through the thumb's travel, with
+          // the club still accelerating, and the rest of the gesture is
+          // follow-through. Which is how swinging at something works.
+          const goal = lerp(this.thetaTop, 1.10, this.driveGoal);
+          this.theta = damp(this.theta, goal, 22, dt);
+        }
+        if (dt > 1e-4) this._thetaVel = (this.theta - was) / dt;
+        this._peakVel = Math.max(this._peakVel, Math.abs(this._thetaVel));
+
+        // Wrist holds its cock through the first third of the way down and
+        // releases into the ball — same shape as before, but on the player's
+        // clock rather than a fixed one.
+        const rel = clamp((this.driveGoal - 0.30) / 0.62, 0, 1);
+        this.hinge = lerp(this.hingeTop, 0, easeInOutSine(rel));
+
+        if (this.theta >= 0) {
+          // Impact. Club speed is the shot — nothing else feeds into it, which
+          // is what makes the gesture worth performing rather than merely
+          // completing. The fastest the club got is a fairer reading of the
+          // swing than whatever one frame happened to catch at the crossing.
+          const speed = Math.max(Math.abs(this._thetaVel), this._peakVel * 0.88);
+          // Calibrated against real gesture speeds: a brisk quarter-second
+          // stroke is most of the club, a hurried one is all of it, and a
+          // slow deliberate one still gets a usable half rather than nothing.
+          this.power = clamp((speed - 3.0) / 22.0, 0.05, 1);
+          this._impactVel = Math.max(speed, 5);
+          this.state = 'through';
+          this.timer = 0;
+          if (this.onImpact) this.onImpact(this.power);
+          this._poseThrough();
+        }
         break;
       }
 

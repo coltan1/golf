@@ -379,15 +379,27 @@ function wireInput() {
     hud.setPower(p);
   };
 
-  input.onRelease = ({ power, lateral, tempo }) => {
+  input.onDriveBegin = () => {
     if (game.state !== 'charging') return;
+    golfer.beginDrive();
+  };
+
+  // The club follows the thumb the whole way down. Nothing here decides when
+  // the ball is struck — the golfer does, when the club reaches it — so this
+  // only keeps the shot shape up to date and shows the speed being generated.
+  input.onDrive = ({ progress, lateral }) => {
+    if (game.state !== 'charging') return;
+    golfer.driveTo(progress);
     game.pending.lateral = lateral;
-    game.pending.tempo = tempo;
-    if (golfer.release(power)) {
-      game.state = 'swinging';
-      hud.showPower(false);
-      audio.whoosh(power);
-    }
+    hud.setPower(clamp(Math.abs(golfer._thetaVel) / 17, 0, 1));
+  };
+
+  input.onDriveEnd = ({ auto, lateral } = {}) => {
+    if (game.state !== 'charging') return;
+    if (lateral !== undefined) game.pending.lateral = lateral;
+    // A keyboard swing has no gesture behind it, so it gets a speed from the
+    // charge it built instead.
+    golfer.coastDrive(auto !== undefined ? lerp(6, 17, auto) : Math.abs(golfer._thetaVel));
   };
 
   input.onCancel = () => {
@@ -396,7 +408,7 @@ function wireInput() {
     game.state = 'ready';
     hud.showPower(false);
     hud.setPower(0);
-    hud.hint('Swipe down to load, then flick up to swing', 3);
+    hud.hint('Swipe down to load, then swing back up through the ball', 3);
   };
 
   hud.onAgain(() => {
@@ -416,7 +428,14 @@ function wireInput() {
 
 /** Callbacks that belong to this hole's golfer and ball. */
 function wireHole() {
-  golfer.onImpact = (power) => launchShot(power);
+  golfer.onImpact = (power) => {
+    // Impact is the moment the swing stops being an input and becomes a shot.
+    game.state = 'swinging';
+    game.pending.tempo = power;
+    hud.showPower(false);
+    audio.whoosh(power);
+    launchShot(power);
+  };
   ball.onRest = () => onBallRest();
   ball.onHoled = () => onHoled();
   ball.onEvent = (type, payload) => {
@@ -506,7 +525,7 @@ function frame() {
   // --- state transitions -------------------------------------------------
   if (game.state === 'intro' && rig.introDone) {
     game.state = 'ready';
-    hud.hint('Hold and swipe down to load — flick up to swing');
+    hud.hint('Swipe down to load — then swing back up through the ball');
     rig.setMode('address');
   }
 

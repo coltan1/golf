@@ -5,18 +5,22 @@
  * first few pixels of movement:
  *
  *   mostly horizontal  →  AIM     (drag to swing the target line around)
- *   mostly vertical    →  CHARGE  (pull down/back to load the backswing,
- *                                  then flick up/forward to release)
+ *   mostly vertical    →  CHARGE  (pull down/back to load the backswing)
+ *                     →  DRIVE    (push back up: the club follows your thumb
+ *                                  down through the ball, in real time)
  *
- * Power comes from how far you pull *and* how fast, so a lazy pull and a
- * confident one feel different in the hand. Lifting your finger without a
- * forward flick simply cancels — no punishing mis-hits.
+ * The downswing is not an animation that plays when you let go. Once the
+ * gesture reverses, the club's position *is* your thumb's position, mapped
+ * from the top of the backswing to the ball — so how hard the shot goes is
+ * how fast you actually move, and stopping halfway stops the club halfway.
+ * Lifting mid-downswing lets it finish at the speed it was already going.
+ *
+ * Lifting without ever starting forward simply cancels — no punishing mis-hit.
  */
 
 import { clamp } from './util.js';
 
-const RELEASE_DIST = 34;   // px of forward travel before a release can fire
-const RELEASE_VEL = 780;   // px/s of forward speed required
+const DRIVE_START = 9;     // px of forward travel before the downswing takes over
 const AXIS_LOCK = 11;      // px of movement before we commit to aim vs charge
 
 export class SwipeSwing {
@@ -24,7 +28,7 @@ export class SwipeSwing {
     this.el = el;
     this.enabled = false;
 
-    this.mode = 'none'; // none | pending | aim | charge
+    this.mode = 'none'; // none | pending | aim | charge | drive
     this.power = 0;
     this.samples = [];
 
@@ -33,7 +37,9 @@ export class SwipeSwing {
     this.onAim = null;
     this.onChargeBegin = null;
     this.onCharge = null;
-    this.onRelease = null;
+    this.onDriveBegin = null;
+    this.onDrive = null;
+    this.onDriveEnd = null;
     this.onCancel = null;
 
     this._down = this._down.bind(this);
@@ -62,8 +68,12 @@ export class SwipeSwing {
       this.keys[e.code] = false;
       if (e.code === 'Space' && this.mode === 'key') {
         this.mode = 'none';
-        if (this.power > 0.06) this.onRelease?.({ power: this.power, lateral: 0, tempo: 0.55 });
-        else this.onCancel?.();
+        // A keyboard has no downswing to give, so it gets one: hand straight
+        // over to the coast, at a speed the charge earned.
+        if (this.power > 0.06) {
+          this.onDriveBegin?.();
+          this.onDriveEnd?.({ auto: this.power, lateral: 0 });
+        } else this.onCancel?.();
         this.power = 0;
       }
     });
@@ -136,24 +146,35 @@ export class SwipeSwing {
       return;
     }
 
-    // --- charging the backswing ---
     const pull = e.clientY - this.anchorY; // down-screen is positive = pulling back
+    const forward = this.peakDy - pull;
+
+    // --- driving the club down ---
+    if (this.mode === 'drive') {
+      this._drive(e.clientX, forward);
+      return;
+    }
+
+    // --- charging the backswing ---
     const { vy } = this._velocity();
     if (pull > this.peakDy) {
       this.peakDy = pull;
       this.peakX = e.clientX;
       this.peakVel = Math.max(this.peakVel, vy);
     }
-
-    // Distance is the main driver; speed adds a modest, forgiving bonus.
-    const speedBonus = clamp(this.peakVel / 2600, 0, 0.17);
-    this.power = clamp(Math.max(0, pull) / this.chargePixels + speedBonus, 0, 1);
+    this.power = clamp(Math.max(0, pull) / this.chargePixels, 0, 1);
     this.onCharge?.(this.power);
 
-    // --- forward flick releases the swing ---
-    const forward = this.peakDy - pull;
-    if (this.power > 0.05 && forward > RELEASE_DIST && vy < -RELEASE_VEL) {
-      this._fire(e.clientX, -vy);
+    // --- the gesture reverses: the club is yours from here ---
+    if (this.power > 0.05 && forward > DRIVE_START) {
+      this.mode = 'drive';
+      // How much thumb travel maps to the whole downswing. Tied to how far
+      // they actually pulled back, so a short backswing is a short stroke and
+      // a full one is a full stroke — the arc you drew going back is the arc
+      // you retrace coming down.
+      this.driveSpan = Math.max(70, this.peakDy * 0.92);
+      this.onDriveBegin?.();
+      this._drive(e.clientX, forward);
     }
   }
 
@@ -161,29 +182,31 @@ export class SwipeSwing {
     if (this.mode === 'none' || this.mode === 'key') return;
     if (e.pointerId !== undefined && e.pointerId !== this.pointerId) return;
 
-    if (this.mode === 'charge') {
-      const pull = e.clientY - this.anchorY;
-      const forward = this.peakDy - pull;
-      const { vy } = this._velocity();
-      // Forgiving: any honest forward motion on release counts as a swing.
-      if (this.power > 0.05 && forward > 22) this._fire(e.clientX, Math.max(-vy, 300));
-      else { this.mode = 'none'; this.onCancel?.(); }
+    if (this.mode === 'drive') {
+      // Thumb gone mid-swing. Let the club finish at the speed it had rather
+      // than freezing it halfway down, which would be unreadable as anything
+      // but a bug.
+      this.mode = 'none';
+      this.onDriveEnd?.({ lateral: this._lateral(e.clientX ?? this.peakX) });
+      this.power = 0;
+    } else if (this.mode === 'charge') {
+      this.mode = 'none';
+      this.onCancel?.();
+      this.power = 0;
     } else {
       this.mode = 'none';
     }
   }
 
-  _fire(x, forwardSpeed) {
-    const w = window.innerWidth;
-    // Where the forward swipe finishes, relative to the top of the backswing,
-    // shapes the shot: swipe up-and-left to draw, up-and-right to fade.
-    const lateral = clamp((x - this.peakX) / (w * 0.22), -1, 1);
-    const tempo = clamp(forwardSpeed / 2800, 0, 1);
-    // A committed forward swipe adds a little pop, but never subtracts.
-    const power = clamp(this.power * (1 + tempo * 0.09), 0, 1);
-    this.mode = 'none';
-    this.power = 0;
-    this.onRelease?.({ power, lateral, tempo });
+  _lateral(x) {
+    // Where the thumb tracks relative to the top of the backswing shapes the
+    // shot: come down inside the line to draw it, outside to fade it.
+    return clamp((x - this.peakX) / (window.innerWidth * 0.22), -1, 1);
+  }
+
+  _drive(x, forward) {
+    const progress = clamp(forward / this.driveSpan, 0, 1);
+    this.onDrive?.({ progress, lateral: this._lateral(x) });
   }
 
   // ------------------------------------------------------------- per frame
