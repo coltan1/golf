@@ -401,6 +401,10 @@ function wireInput() {
     game.state = 'charging';
     golfer.beginBackswing();
     hud.showPower(true);
+    // On a putt the meter is a fraction of the distance to the hole, so the
+    // midpoint is dead weight and worth marking. On a full shot it is absolute
+    // and a notch would mean nothing.
+    hud.setPowerTarget(game.club === CLUBS.putter ? 0.5 : null);
     hud.hint('');
   };
 

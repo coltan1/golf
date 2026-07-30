@@ -29,6 +29,7 @@ export class Hud {
       btnSound: $('btnSound'),
       freecam: $('freecamHud'),
       loader: $('loader'),
+      powerMark: $('powerMark'),
     };
     this._hintTimer = null;
     this._shotTimer = null;
@@ -82,6 +83,18 @@ export class Hud {
   showPower(on) {
     this.el.power.classList.toggle('show', on);
     if (!on) this.el.powerLabel.classList.remove('show');
+  }
+
+  /**
+   * Put a notch on the power meter, as a 0..1 position, or null to hide it.
+   * Used on putts, where the meter reads as a fraction of the distance needed
+   * and the halfway point is therefore a real target rather than a number.
+   */
+  setPowerTarget(v) {
+    const el = this.el.powerMark;
+    if (!el) return;
+    el.classList.toggle('on', v !== null && v !== undefined);
+    if (v !== null && v !== undefined) el.style.left = `calc(${(v * 100).toFixed(1)}% - 1px)`;
   }
 
   setPower(v) {

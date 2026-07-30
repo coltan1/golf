@@ -85,6 +85,14 @@
     overflow:hidden;
   }
   #power.show{opacity:1;transform:translateX(-50%) translateY(0) scaleX(1)}
+  /* Marks dead weight on a putt — the point where the ball finishes at the
+     cup. Only shown for the putter, where the meter is relative. */
+  #powerMark{
+    position:absolute;top:-4px;width:2px;height:14px;border-radius:2px;
+    background:rgba(30,60,45,.62);box-shadow:0 0 6px rgba(255,255,255,.7);
+    display:none;pointer-events:none;
+  }
+  #powerMark.on{display:block}
   #powerFill{
     height:100%;width:0%;border-radius:999px;
     background:linear-gradient(90deg,#a9e5a0 0%,#ffd97a 58%,#ff9f6b 100%);
@@ -177,7 +185,7 @@
   <div id="shot" class="pill"></div>
 
   <div id="powerLabel"></div>
-  <div id="power"><div id="powerFill"></div></div>
+  <div id="power"><div id="powerFill"></div><div id="powerMark"></div></div>
   <div id="hint" class="pill"></div>
   <div id="freecamHud" class="pill"></div>
 

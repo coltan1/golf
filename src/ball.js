@@ -79,8 +79,11 @@ const SURF = {
 const GRAVITY = 24;
 const RADIUS = 0.21;
 const REST_SPEED = 0.42;   // below this the ball is considered stopped
-const CUP_RADIUS = 0.52;
-const CUP_SPEED = 5.2;
+// A shade wider and a shade more tolerant of pace than the true hole. A putt
+// that catches the edge with any speed on it should drop rather than horseshoe
+// out, which at this camera distance reads as the game being unfair.
+const CUP_RADIUS = 0.60;
+const CUP_SPEED = 5.8;
 
 // --- soft round sprite, reused by the trail, the puff and the splash ---------
 function makeSoftSprite() {
@@ -230,9 +233,40 @@ export class Ball {
 
     if (club === CLUBS.putter) {
       // Putts skip the arc entirely and roll from the first frame.
-      // Calibrated against green friction so distance ≈ 45 × power² yards:
-      // a quarter of the bar is a ten-footer, full bar covers the green.
-      const speed = p * 19.5 * lie;
+      //
+      // Strength is relative to the putt in front of you, not absolute.
+      //
+      // Absolute was the problem. Rolled out and measured, power mapped to
+      // distance as roughly 31 yards x power squared: a ten-footer wanted 0.31
+      // and a thirty-footer 0.55, so every putt worth playing lived between
+      // 0.17 and 0.55 — a narrow strip in the softest, least controllable
+      // corner of the gesture, while an ordinary half stroke already produced
+      // twenty-five feet and a normal full one seventy-eight. And because the
+      // curve is quadratic, error grows with strength, so the long putts that
+      // need the most control got the least.
+      //
+      // Reading it as a fraction of the distance to the hole fixes both. A
+      // middling stroke is exactly the right pace whatever the length, the
+      // whole range spans 0.3x to 1.7x, and the meter means the same thing on
+      // a four-footer as on a forty-footer. Judging pace against the putt in
+      // front of you is what putting actually is; judging it against an
+      // invisible absolute scale is not.
+      const need = Math.max(0.6, distToHole(this.pos.x, this.pos.z));
+      const want = need * (0.34 + p * 1.44);
+      // Inverse of the actual roll, so a requested distance comes out as one.
+      //
+      // The constant is measured, not derived. Rolling the real ball at known
+      // speeds gives distance proportional to speed squared with a coefficient
+      // of about 2.82 over the range a putt lives in — the first version of
+      // this used 3.48, taken from a simplified model of the friction, which is
+      // 24% too much speed and therefore about 55% too much distance. Every
+      // putt inside twenty feet went in regardless of stroke, which is not
+      // easier so much as pointless.
+      // 2.92, with the mapping above set so the midpoint lands just past the
+      // hole rather than just short. Dying at the front edge looks correct on
+      // paper and feels like a miss; a ball that reaches the cup with a little
+      // left has a chance of falling in.
+      const speed = 2.92 * Math.sqrt(Math.min(want, 26)) * lie;
       this.vel.copy(this.dir).multiplyScalar(speed);
       this.vel.y = 0;
       this.state = 'physics';
