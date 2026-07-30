@@ -33,7 +33,11 @@ function styleTag() {
   const el = document.createElement('style');
   el.id = 'kitStyle';
   el.textContent = `
-  #btnKit{cursor:pointer;user-select:none}
+  #btnKit{
+    pointer-events:auto; cursor:pointer; user-select:none;
+    width:38px; height:38px; padding:0; display:grid; place-items:center; font-size:15px;
+    transition:transform .25s cubic-bezier(.22,1,.36,1);
+  }
   #btnKit:active{transform:scale(.92)}
   #kit{
     position:fixed; right:14px; top:64px; z-index:40; width:270px; max-width:calc(100vw - 28px);
@@ -181,11 +185,17 @@ export function createKitPanel(api) {
 
   // ---- open / close ----
   const setOpen = (open) => panel.classList.toggle('open', open);
-  btn.onclick = (e) => { e.stopPropagation(); setOpen(!panel.classList.contains('open')); refresh(); };
-  panel.onclick = (e) => e.stopPropagation();
+  btn.onclick = () => { setOpen(!panel.classList.contains('open')); refresh(); };
   // Anywhere else closes it — including the canvas, so a stray tap while the
-  // panel is open does not also start a swing behind it.
-  document.addEventListener('pointerdown', () => setOpen(false));
+  // panel is open does not also start a swing behind it. The button and the
+  // panel are excluded by hit-testing rather than by stopping propagation:
+  // pointerdown fires before click, so a bare listener here would close the
+  // panel a moment before the button's own click reopened it, and the button
+  // would never appear to close anything.
+  document.addEventListener('pointerdown', (e) => {
+    if (btn.contains(e.target) || panel.contains(e.target)) return;
+    setOpen(false);
+  });
   window.addEventListener('keydown', (e) => { if (e.key === 'Escape') setOpen(false); });
 
   refresh();

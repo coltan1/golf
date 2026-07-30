@@ -159,10 +159,13 @@ export class Golfer {
     let vTotal = 0, iTotal = 0;
     for (const p of parts) {
       const g = p.geo.index ? p.geo : p.geo.toNonIndexed();
-      e.set(...(p.rot ?? [0, 0, 0]));
+      // `quat` for parts that have to point along a computed direction; `rot`
+      // for the ordinary case where an Euler triple is easier to read.
+      if (p.quat) q.copy(p.quat);
+      else { e.set(...(p.rot ?? [0, 0, 0])); q.setFromEuler(e); }
       m.compose(
         new THREE.Vector3(...(p.pos ?? [0, 0, 0])),
-        q.setFromEuler(e),
+        q,
         new THREE.Vector3(...(p.scale ?? [1, 1, 1]))
       );
       g.applyMatrix4(m);
@@ -425,29 +428,36 @@ export class Golfer {
     this.swingArm = new THREE.Group();
     this.swingPlane.add(this.swingArm);
 
-    // Arms, each running from its own shoulder down to the grip.
+    // Arms, each spanning from its own shoulder to the grip.
     //
-    // They were doing neither before. They attached at z = ±0.072 while the
-    // shoulder caps sit at ±0.135, and the swing plane is itself offset -0.05
-    // in z — so both arms emerged from the middle of the chest rather than from
-    // the shoulders. And their tilt was the wrong way round, which splayed them
-    // *outward* on the way down instead of converging on the club.
+    // These have to be *solved*, not placed. The pivot they hang from sits
+    // about 0.19 in front of the body and 0.17 across it — that offset is what
+    // puts the hands out over the ball — so anything dropped straight down from
+    // it ends up floating in front of the chest, connected to nothing. Guessing
+    // local offsets got it wrong twice.
     //
-    // The two are deliberately not mirror images. The plane offset means the
-    // far shoulder is a good deal further from the grip than the near one, so
-    // the lead arm is longer and more steeply angled — which is exactly what
-    // happens when a person puts both hands on the same club.
-    const shoulderZ = 0.135 - this.swingPlane.position.z - this.stance.position.z;
-    const arm = (topZ) => {
-      const dy = 0.23, dz = -topZ;                 // shoulder -> grip
-      const len = Math.hypot(dy, dz);
+    // Inverting the swing plane's own transform gives the exact point in arm
+    // space that lands on a shoulder cap, and a quaternion aims the capsule
+    // down the line from there to the grip. Two lines, and it cannot drift out
+    // of step with the body: move the shoulders or the pivot and the arms
+    // follow.
+    const SHOULDER_Y = 0.74;   // stance space: hips 0.46 + torso 0.10 + cap 0.18
+    const SHOULDER_Z = 0.135;
+    this.swingPlane.updateMatrix();
+    const toArmSpace = new THREE.Matrix4().copy(this.swingPlane.matrix).invert();
+    const gripPoint = new THREE.Vector3(0, -ARM_LEN + 0.03, 0);
+    const upAxis = new THREE.Vector3(0, 1, 0);
+    const armTo = (z) => {
+      const top = new THREE.Vector3(0, SHOULDER_Y, z).applyMatrix4(toArmSpace);
+      const span = top.clone().sub(gripPoint);
+      const len = span.length();
       return {
         geo: new THREE.CapsuleGeometry(0.048, Math.max(0.02, len - 0.096), 8, 16),
-        pos: [-0.030, -0.125, topZ / 2],
-        rot: [Math.atan2(topZ, dy), 0, 0],
+        pos: top.clone().add(gripPoint).multiplyScalar(0.5).toArray(),
+        quat: new THREE.Quaternion().setFromUnitVectors(upAxis, span.normalize()),
       };
     };
-    this._region('skin', this.swingArm, [arm(shoulderZ), arm(shoulderZ - 0.27)]);
+    this._region('skin', this.swingArm, [armTo(SHOULDER_Z), armTo(-SHOULDER_Z)]);
     // Both hands together on the grip: one small blob, the way the reference
     // reads them.
     this._region('glove', this.swingArm, [
