@@ -95,7 +95,7 @@
     fill:none;stroke:url(#swingGrad);stroke-width:30;stroke-linecap:round;
     stroke-dasharray:100;stroke-dashoffset:100;
     transition:stroke-dashoffset .06s linear;
-    filter:drop-shadow(0 0 9px rgba(255,190,120,.45));
+    filter:drop-shadow(0 0 10px var(--swingGlow, rgba(140,220,150,.45)));
   }
   #swingMark{
     stroke:rgba(28,58,44,.66);stroke-width:2.5;stroke-linecap:round;
@@ -194,10 +194,15 @@
   <div id="power">
     <svg id="swingSvg" viewBox="0 0 72 320">
       <defs>
-        <linearGradient id="swingGrad" x1="0" y1="1" x2="0" y2="0">
-          <stop offset="0%" stop-color="#a9e5a0"/>
-          <stop offset="58%" stop-color="#ffd97a"/>
-          <stop offset="100%" stop-color="#ff9f6b"/>
+        <!-- userSpaceOnUse, not the default objectBoundingBox: a dead-straight
+             swing makes this path a vertical line whose bounding box has zero
+             width, and a zero-width box disables an objectBoundingBox gradient
+             outright. Fixed coordinates do not care what shape the path is. -->
+        <linearGradient id="swingGrad" gradientUnits="userSpaceOnUse"
+                        x1="0" y1="294" x2="0" y2="26">
+          <stop id="swingStop0" offset="0%" stop-color="#7ad684"/>
+          <stop id="swingStop1" offset="55%" stop-color="#7ad684"/>
+          <stop id="swingStop2" offset="100%" stop-color="#7ad684"/>
         </linearGradient>
       </defs>
       <rect id="swingTrack" x="6" y="8" width="60" height="304" rx="30"/>

@@ -11,6 +11,35 @@ import { clamp } from './util.js';
 const BAR_MID = 36;
 const BAR_TOP = 26;
 const BAR_BOTTOM = 294;
+/**
+ * The colour the bar climbs through as it charges.
+ *
+ * The gradient used to be fixed along the track, so the bar was green at the
+ * bottom and orange at the top no matter how hard you were swinging — the
+ * colour told you where you were looking, not how much power you had. Driving
+ * the stops from the power instead means the whole bar warms as you pull back,
+ * and the top of the fill is always the hottest colour you have earned.
+ */
+const RAMP = [
+  [0.00, [122, 214, 132]],   // green
+  [0.45, [255, 217, 122]],   // amber
+  [0.78, [255, 159, 107]],   // orange
+  [1.00, [255, 96, 88]],     // red
+];
+
+function rampAt(t) {
+  const v = t < 0 ? 0 : t > 1 ? 1 : t;
+  for (let i = 1; i < RAMP.length; i++) {
+    if (v > RAMP[i][0] && i < RAMP.length - 1) continue;
+    const [t0, c0] = RAMP[i - 1], [t1, c1] = RAMP[i];
+    const k = t1 === t0 ? 0 : (v - t0) / (t1 - t0);
+    return `rgb(${Math.round(c0[0] + (c1[0] - c0[0]) * k)},` +
+           `${Math.round(c0[1] + (c1[1] - c0[1]) * k)},` +
+           `${Math.round(c0[2] + (c1[2] - c0[2]) * k)})`;
+  }
+  return `rgb(${RAMP[0][1].join(',')})`;
+}
+
 // How far the fill leans at full deflection.
 //
 // Deliberately more than the track can hold. Kept inside, the bend was legible
@@ -41,6 +70,7 @@ export class Hud {
       freecam: $('freecamHud'),
       loader: $('loader'),
       swingFill: $('swingFill'),
+      swingStops: ['swingStop0', 'swingStop1', 'swingStop2'].map($),
       swingMark: $('swingMark'),
     };
     this._hintTimer = null;
@@ -151,6 +181,17 @@ export class Hud {
       `M${BAR_MID} ${BAR_BOTTOM} Q ${(BAR_MID + bend * 1.35).toFixed(1)} 160 ` +
       `${(BAR_MID + bend).toFixed(1)} ${BAR_TOP}`);
     el.style.strokeDashoffset = `${(100 - p * 100).toFixed(1)}`;
+
+    // Base stays cooler than the tip, so the fill reads as heating from the
+    // bottom up rather than flooding one flat colour.
+    const stops = this.el.swingStops;
+    if (stops && stops[0]) {
+      stops[0].setAttribute('stop-color', rampAt(p * 0.30));
+      stops[1].setAttribute('stop-color', rampAt(p * 0.68));
+      stops[2].setAttribute('stop-color', rampAt(p));
+      const hot = rampAt(p).replace('rgb(', 'rgba(').replace(')', `,${(0.30 + p * 0.35).toFixed(2)})`);
+      el.style.setProperty('--swingGlow', hot);
+    }
   }
 
   shot(text, hold = 3.4) {
