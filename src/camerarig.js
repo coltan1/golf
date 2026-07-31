@@ -72,29 +72,23 @@ export class CameraRig {
 
       // ---- standing over the ball ----
       case 'address': {
-        // Centred on the ball, and very nearly straight down the line.
+        // Directly behind the ball, looking straight down the aim line.
         //
-        // This used to sit two and a half yards to the player's side and then
-        // look a further yard the *same* way, which put the ball off toward one
-        // edge of frame and the target line off toward the other. The reason
-        // for any offset at all is that dead behind, the club covers the ball —
-        // so there is still a little, but only enough to see past the shaft.
-        const rx = Math.cos(ctx.aim), rz = Math.sin(ctx.aim);
-        const drift = Math.sin(this.time * 0.28) * 0.22; // a whisper of life
+        // Any sideways step at all costs heading: standing 1.15 yards to the
+        // side and looking through the ball points the camera 6 degrees off the
+        // line, so the aim arrow ran diagonally across the screen instead of
+        // straight up it. Centring the ball and facing where the arrow faces
+        // are the same requirement, and both need the camera on the line.
+        //
+        // The offset existed because dead behind, the shaft can cross the ball.
+        // With the golfer standing perpendicular to the line that is a glance
+        // rather than an occlusion, and it is not worth six degrees of heading.
         const back = lerp(10.6, 9.3, ctx.charge);
-        const up = lerp(4.3, 3.9, ctx.charge);
-        const side = 1.15 + drift;
-        const cx = b.x - fwd.x * back + rx * side;
-        const cz = b.z - fwd.z * back + rz * side;
-        this.desiredPos.set(cx, b.y + up, cz);
-        // Aim through the ball and on down the line beyond it. Deriving the
-        // gaze from the camera's own position rather than writing an offset by
-        // hand is what keeps the ball centred: change `back` or `side` and the
-        // framing follows, instead of drifting off by however much the two
-        // numbers now disagree.
-        const dx = b.x - cx, dz = b.z - cz;
-        const dl = Math.hypot(dx, dz) || 1;
-        this.desiredLook.set(b.x + (dx / dl) * 11, b.y + 1.5, b.z + (dz / dl) * 11);
+        // The whisper of life moved from a sideways sway to a vertical one, so
+        // that it cannot disturb the heading.
+        const up = lerp(4.3, 3.9, ctx.charge) + Math.sin(this.time * 0.28) * 0.10;
+        this.desiredPos.set(b.x - fwd.x * back, b.y + up, b.z - fwd.z * back);
+        this.desiredLook.set(b.x + fwd.x * 11, b.y + 1.5, b.z + fwd.z * 11);
         this.desiredFov = lerp(53, 50.5, ctx.charge);
         lamPos = 2.6; lamLook = 3.4;
         break;
