@@ -391,18 +391,27 @@ export class Golfer {
 
     this.headwear.cap = new THREE.Group();
     this.head.add(this.headwear.cap);
+    // Sized to *this* head, not the one it was drawn for.
+    //
+    // The cap and visor were authored against the taller golfer and never
+    // re-fitted when the head became a big round toy one. The cap's dome swept
+    // 0.56pi — down to y 0.105 — and its peak sat at 0.132, while the eyes are
+    // at 0.172: the hat was covering the face. The dome now stops at 0.37pi,
+    // which puts its lower edge at 0.234, clear above the top of the eyes.
     this._region('cap', this.headwear.cap, [
-      { geo: new THREE.SphereGeometry(0.212, 22, 15, 0, Math.PI * 2, 0, Math.PI * 0.56), pos: [0, 0.145, 0] },
-      { geo: new THREE.CylinderGeometry(0.205, 0.205, 0.030, 24, 1, false, Math.PI * 0.62, Math.PI * 0.76),
-        pos: [-0.068, 0.132, 0], rot: [0, 0, 0.20], scale: [1.34, 1, 1.02] },
+      { geo: new THREE.SphereGeometry(0.216, 22, 15, 0, Math.PI * 2, 0, Math.PI * 0.37), pos: [0, 0.148, 0] },
+      { geo: new THREE.CylinderGeometry(0.212, 0.212, 0.030, 24, 1, false, Math.PI * 0.62, Math.PI * 0.76),
+        pos: [-0.055, 0.236, 0], rot: [0, 0, 0.16], scale: [1.32, 1, 1.02] },
     ]);
 
     this.headwear.visor = new THREE.Group();
     this.head.add(this.headwear.visor);
     this._region('cap', this.headwear.visor, [
-      { geo: new THREE.CylinderGeometry(0.210, 0.206, 0.085, 24, 1, true), pos: [0, 0.200, 0] },
-      { geo: new THREE.CylinderGeometry(0.205, 0.205, 0.030, 24, 1, false, Math.PI * 0.62, Math.PI * 0.76),
-        pos: [-0.068, 0.166, 0], rot: [0, 0, 0.20], scale: [1.34, 1, 1.02] },
+      // Same story: the band rode at 0.200 and the peak at 0.166, straight
+      // across the eyes. Both lifted so the peak clears them.
+      { geo: new THREE.CylinderGeometry(0.206, 0.202, 0.075, 24, 1, true), pos: [0, 0.272, 0] },
+      { geo: new THREE.CylinderGeometry(0.210, 0.210, 0.030, 24, 1, false, Math.PI * 0.62, Math.PI * 0.76),
+        pos: [-0.055, 0.238, 0], rot: [0, 0, 0.16], scale: [1.32, 1, 1.02] },
     ], { side: THREE.DoubleSide });
 
     this.headwear.none = new THREE.Group();

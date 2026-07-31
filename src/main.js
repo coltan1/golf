@@ -29,6 +29,7 @@ import { FreeCam } from './freecam.js';
 import { Audio } from './audio.js';
 import { Hud, scoreName } from './hud.js';
 import { createKitPanel } from './kit.js';
+import { Match } from './match.js';
 import { HOLES, TOTAL_PAR } from './holes.js';
 
 // ---------------------------------------------------------------- renderer
@@ -63,6 +64,7 @@ const audio = new Audio();
 // ---------------------------------------------------------------- world
 let terrain, water, creek, clouds, flag, clubhouse, golfer, ball, rig, aimLine, input, lights, freeCam;
 let sunRays, butterflies, motes;
+let match = null;
 
 // Everything belonging to the current hole hangs off this, so switching holes
 // is a matter of disposing one subtree rather than tracking every object.
@@ -160,6 +162,7 @@ function initOnce() {
   freeCam = new FreeCam(camera, renderer.domElement);
   wireInput();
   createKitPanel(window.golfer);
+  setupMatch();
 }
 
 // ---------------------------------------------------------------- freecam
@@ -473,18 +476,26 @@ function wireInput() {
   };
 
   hud.onAgain(() => {
-    hud.hideCard();
+    // In a match the hole ends when both players are in, not when one of them
+    // presses a button — so the button only reports readiness.
+    if (match?.waitingForOpponent) return;
     const last = game.holeIndex === HOLES.length - 1;
-    const next = last ? 0 : game.holeIndex + 1;
-    if (last) game.total = 0;
-    // Building a hole blocks for well over a second, most of it baking the
-    // course texture. Put the loader up first so that time reads as loading
-    // rather than as the game having frozen.
-    hud.showLoader(`${HOLES[next].n}. ${HOLES[next].name}`);
-    afterPaint(() => { loadHole(next); hud.hideLoader(); });
+    goToHole(last ? 0 : game.holeIndex + 1, last);
   });
+
   hud.onSound((on) => audio.setEnabled(on));
 
+}
+
+/** The one path that changes hole, shared by the scorecard and by a match. */
+function goToHole(next, resetTotal) {
+  hud.hideCard();
+  if (resetTotal) game.total = 0;
+  // Building a hole blocks for well over a second, most of it baking the
+  // course texture. Put the loader up first so that time reads as loading
+  // rather than as the game having frozen.
+  hud.showLoader(`${HOLES[next].n}. ${HOLES[next].name}`);
+  afterPaint(() => { loadHole(next); hud.hideLoader(); });
 }
 
 /** Callbacks that belong to this hole's golfer and ball. */
@@ -496,8 +507,8 @@ function wireHole() {
     hud.showPower(false);
     launchShot(power);
   };
-  ball.onRest = () => onBallRest();
-  ball.onHoled = () => onHoled();
+  ball.onRest = () => { match?.reportRest(game.holeIndex, ball.pos, game.strokes); onBallRest(); };
+  ball.onHoled = () => { match?.reportHoled(game.holeIndex, game.strokes); onHoled(); };
   ball.onEvent = (type, payload) => {
     if (type === 'bounce') audio.bounce(clamp(payload.impact / 14, 0, 1));
     else if (type === 'splash') { audio.splash(); penalty('splash'); }
@@ -577,6 +588,7 @@ function frame() {
   sunRays.userData.tick(dt, camera);
   butterflies.userData.tick(dt);
   motes.userData.tick(dt);
+  match?.update(dt);
   if (water) water.userData.tick(time);
   if (creek) creek.userData.tick(time);
   flag.userData.tick(time);
@@ -634,6 +646,64 @@ function frame() {
   }
 
   renderer.render(scene, camera);
+}
+
+// ---------------------------------------------------------------- multiplayer
+/**
+ * The 1v1 button and its status line.
+ *
+ * Built here rather than in markup for the same reason the kit panel is: it is
+ * three elements and one callback, and keeping it beside the wiring it depends
+ * on is easier to follow than splitting it across two files.
+ */
+function setupMatch() {
+  match = new Match(scene);
+
+  // A name that persists, so an opponent sees the same person twice.
+  let name = localStorage.getItem('sunnylinks.name');
+  if (!name) {
+    name = 'Player ' + Math.floor(1000 + Math.random() * 9000);
+    try { localStorage.setItem('sunnylinks.name', name); } catch { /* private mode */ }
+  }
+
+  const style = document.createElement('style');
+  style.textContent = `
+    #btnMp{pointer-events:auto;cursor:pointer;user-select:none;width:38px;height:38px;
+      padding:0;display:grid;place-items:center;font-size:15px}
+    #btnMp:active{transform:scale(.92)}
+    #mpStatus{position:absolute;top:max(62px,calc(env(safe-area-inset-top,0px) + 62px));
+      right:16px;max-width:min(280px,60vw);text-align:right;font-size:12.5px;font-weight:700;
+      opacity:0;transition:opacity .3s ease;pointer-events:none}
+    #mpStatus.on{opacity:1}
+    #mpStatus.good{color:#1f7a4d}#mpStatus.bad{color:#c0392b}#mpStatus.error{color:#c0392b}
+    #mpStatus.busy{opacity:.7}
+  `;
+  document.head.appendChild(style);
+
+  const btn = document.createElement('div');
+  btn.className = 'pill';
+  btn.id = 'btnMp';
+  btn.title = 'Play 1v1 online';
+  btn.textContent = '⚔';
+  document.getElementById('topRight')?.appendChild(btn);
+
+  const status = document.createElement('div');
+  status.id = 'mpStatus';
+  status.className = 'pill';
+  document.getElementById('hud')?.appendChild(status);
+
+  match.onStatus = (text, kind) => {
+    status.textContent = text ? `${text}${match.active ? ' · ' + match.scoreline : ''}` : '';
+    status.className = 'pill ' + (kind || '') + (text ? ' on' : '');
+  };
+  // Both players are in: move on together, from wherever either of them was.
+  match.onAdvance = () => goToHole(match.hole % HOLES.length, match.hole === 0);
+
+  btn.onclick = () => {
+    if (match.active || match.net.state === 'waiting') match.leave();
+    else match.find(name);
+  };
+  window.addEventListener('beforeunload', () => match.leave());
 }
 
 // ---------------------------------------------------------------- freecam API
