@@ -11,9 +11,13 @@ import { clamp } from './util.js';
 const BAR_MID = 36;
 const BAR_TOP = 26;
 const BAR_BOTTOM = 294;
-// How far the fill leans at full deflection. The track is 60 wide and the fill
-// stroke 30, so 15 is exactly the point at which it kisses the inside edge.
-const BAR_BEND = 13;
+// How far the fill leans at full deflection.
+//
+// Deliberately more than the track can hold. Kept inside, the bend was legible
+// only by comparing it against the outline; bowing out of the track makes the
+// shape of the shot obvious at a glance, which is the whole reason the bar
+// bends at all. The SVG is overflow:visible so it draws outside its box.
+const BAR_BEND = 26;
 
 const $ = (id) => document.getElementById(id);
 

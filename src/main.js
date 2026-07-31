@@ -396,16 +396,27 @@ function wireInput() {
     setAim(game.aim + d);
   };
 
+  // Bar up on touch. The charge callbacks below still own everything else;
+  // this only decides when it is on screen.
+  const showBar = () => {
+    hud.showPower(true);
+    hud.setPower(0);
+    hud.setSwingCurve(0);
+    hud.setPowerTarget(game.club === CLUBS.putter ? 0.5 : null);
+  };
+
+  input.onPress = () => { if (game.state === 'ready') showBar(); };
+  input.onAimBegin = () => hud.showPower(false);
+  input.onPressEnd = () => { if (game.state === 'ready') hud.showPower(false); };
+
   input.onChargeBegin = () => {
     if (game.state !== 'ready') return;
     game.state = 'charging';
     golfer.beginBackswing();
-    hud.showPower(true);
     // On a putt the meter is a fraction of the distance to the hole, so the
     // midpoint is dead weight and worth marking. On a full shot it is absolute
     // and a notch would mean nothing.
-    hud.setPowerTarget(game.club === CLUBS.putter ? 0.5 : null);
-    hud.setSwingCurve(0);
+    showBar();
     hud.hint('');
   };
 

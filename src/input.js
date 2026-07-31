@@ -36,6 +36,9 @@ export class SwipeSwing {
     // Callbacks — wired up in main.js
     this.onStart = null;
     this.onAim = null;
+    this.onPress = null;
+    this.onPressEnd = null;
+    this.onAimBegin = null;
     this.onChargeBegin = null;
     this.onCharge = null;
     this.onDriveBegin = null;
@@ -113,6 +116,11 @@ export class SwipeSwing {
     this.power = 0;
     this.samples.length = 0;
     this._track(e.clientX, e.clientY);
+    // Put the bar up the instant a finger lands. Waiting for the axis lock to
+    // decide this is a swing rather than an aim drag left a dead beat at the
+    // very start of the backswing, right when the player is looking for
+    // feedback that the game noticed them.
+    this.onPress?.();
   }
 
   _move(e) {
@@ -129,6 +137,7 @@ export class SwipeSwing {
       if (Math.abs(dx) > AXIS_LOCK && Math.abs(dx) > Math.abs(dy) * 1.15) {
         this.mode = 'aim';
         this.lastAimX = e.clientX;
+        this.onAimBegin?.();
       } else if (Math.abs(dy) > AXIS_LOCK) {
         this.mode = 'charge';
         // Re-anchor so the club starts moving from exactly here — no jump.
