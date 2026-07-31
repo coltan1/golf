@@ -405,6 +405,7 @@ function wireInput() {
     // midpoint is dead weight and worth marking. On a full shot it is absolute
     // and a notch would mean nothing.
     hud.setPowerTarget(game.club === CLUBS.putter ? 0.5 : null);
+    hud.setSwingCurve(0);
     hud.hint('');
   };
 
@@ -426,8 +427,13 @@ function wireInput() {
   input.onDrive = ({ progress, lateral }) => {
     if (game.state !== 'charging') return;
     golfer.driveTo(progress);
-    game.pending.lateral = lateral;
+    // The bar bends one way and the ball has to bend the same way, or the bar
+    // is worse than useless — it would be actively lying while you swing. The
+    // sign flip is here rather than in the HUD because the bar's direction is
+    // the one that was specified; the flight follows it.
+    game.pending.lateral = -lateral;
     hud.setPower(golfer.livePower);
+    hud.setSwingCurve(lateral);
     // The club has to be heard coming *before* it arrives. Firing this at
     // impact, as it used to, put the swish and the strike in the same instant
     // and the swing had no approach at all.
@@ -439,7 +445,7 @@ function wireInput() {
 
   input.onDriveEnd = ({ auto, lateral } = {}) => {
     if (game.state !== 'charging') return;
-    if (lateral !== undefined) game.pending.lateral = lateral;
+    if (lateral !== undefined) game.pending.lateral = -lateral;
     // A keyboard swing has no gesture behind it, so it gets a speed from the
     // charge it built instead.
     golfer.coastDrive(auto !== undefined ? lerp(6, 17, auto) : Math.abs(golfer._thetaVel));
@@ -447,6 +453,7 @@ function wireInput() {
 
   input.onCancel = () => {
     if (game.state !== 'charging') return;
+    hud.setSwingCurve(0);
     golfer.cancel();
     game.state = 'ready';
     hud.showPower(false);
@@ -689,7 +696,7 @@ window.freecam = Object.assign(
     },
 
     /** Live handles on the render objects, for automated shading audits. */
-    dbg: () => ({ renderer, scene, camera, lights, terrain, game, golfer, input, rig, THREE }),
+    dbg: () => ({ renderer, scene, camera, lights, terrain, game, golfer, input, rig, hud, THREE }),
 
     /** Jump straight to a hole by number (1-18), skipping the scorecard. */
     hole: (n) => {

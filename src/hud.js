@@ -7,6 +7,14 @@
 
 import { clamp } from './util.js';
 
+// Geometry of the swing bar, matching the SVG in index.html.
+const BAR_MID = 36;
+const BAR_TOP = 26;
+const BAR_BOTTOM = 294;
+// How far the fill leans at full deflection. The track is 60 wide and the fill
+// stroke 30, so 15 is exactly the point at which it kisses the inside edge.
+const BAR_BEND = 13;
+
 const $ = (id) => document.getElementById(id);
 
 export class Hud {
@@ -19,7 +27,6 @@ export class Hud {
       strokes: $('strokes'),
       hint: $('hint'),
       power: $('power'),
-      powerFill: $('powerFill'),
       powerLabel: $('powerLabel'),
       shot: $('shot'),
       card: $('card'),
@@ -29,7 +36,8 @@ export class Hud {
       btnSound: $('btnSound'),
       freecam: $('freecamHud'),
       loader: $('loader'),
-      powerMark: $('powerMark'),
+      swingFill: $('swingFill'),
+      swingMark: $('swingMark'),
     };
     this._hintTimer = null;
     this._shotTimer = null;
@@ -86,26 +94,59 @@ export class Hud {
   }
 
   /**
-   * Put a notch on the power meter, as a 0..1 position, or null to hide it.
-   * Used on putts, where the meter reads as a fraction of the distance needed
-   * and the halfway point is therefore a real target rather than a number.
+   * Put a notch across the bar, as a 0..1 height, or null to hide it. Used on
+   * putts, where the meter reads as a fraction of the distance needed and the
+   * halfway point is therefore a real target rather than a number.
    */
   setPowerTarget(v) {
-    const el = this.el.powerMark;
+    const el = this.el.swingMark;
     if (!el) return;
-    el.classList.toggle('on', v !== null && v !== undefined);
-    if (v !== null && v !== undefined) el.style.left = `calc(${(v * 100).toFixed(1)}% - 1px)`;
+    const on = v !== null && v !== undefined;
+    el.classList.toggle('on', on);
+    if (on) {
+      const y = (BAR_BOTTOM - clamp(v, 0, 1) * (BAR_BOTTOM - BAR_TOP)).toFixed(1);
+      el.setAttribute('y1', y);
+      el.setAttribute('y2', y);
+    }
+  }
+
+  /**
+   * How far the swing is cutting across the ball, -1 (left) to 1 (right).
+   *
+   * The fill bends the *opposite* way, because that is the shape of the shot
+   * rather than the shape of the stroke: a stroke coming across to the right
+   * puts left-hand spin on the ball and the flight bends left. So the bar shows
+   * you where the ball is going, not where your thumb went — which is the only
+   * version of this that is any use while you are swinging.
+   */
+  setSwingCurve(v) {
+    this._curve = clamp(v ?? 0, -1, 1);
+    this._drawSwing();
   }
 
   setPower(v) {
-    const p = clamp(v, 0, 1);
-    this.el.powerFill.style.width = `${p * 100}%`;
-    if (p > 0.02) {
-      this.el.powerLabel.textContent = `${Math.round(p * 100)}%`;
+    this._power = clamp(v, 0, 1);
+    this._drawSwing();
+    if (this._power > 0.02) {
+      this.el.powerLabel.textContent = `${Math.round(this._power * 100)}%`;
       this.el.powerLabel.classList.add('show');
     } else {
       this.el.powerLabel.classList.remove('show');
     }
+  }
+
+  _drawSwing() {
+    const el = this.el.swingFill;
+    if (!el) return;
+    const p = this._power ?? 0;
+    const bend = -(this._curve ?? 0) * BAR_BEND;
+    // Quadratic from the bottom of the track to the top. The control point
+    // leans further than the end point, so the fill bows rather than merely
+    // tilting — a straight line at an angle does not read as spin.
+    el.setAttribute('d',
+      `M${BAR_MID} ${BAR_BOTTOM} Q ${(BAR_MID + bend * 1.35).toFixed(1)} 160 ` +
+      `${(BAR_MID + bend).toFixed(1)} ${BAR_TOP}`);
+    el.style.strokeDashoffset = `${(100 - p * 100).toFixed(1)}`;
   }
 
   shot(text, hold = 3.4) {

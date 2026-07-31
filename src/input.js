@@ -30,6 +30,7 @@ export class SwipeSwing {
 
     this.mode = 'none'; // none | pending | aim | charge | drive
     this.power = 0;
+    this.lateral = 0;
     this.samples = [];
 
     // Callbacks — wired up in main.js
@@ -187,7 +188,7 @@ export class SwipeSwing {
       // than freezing it halfway down, which would be unreadable as anything
       // but a bug.
       this.mode = 'none';
-      this.onDriveEnd?.({ lateral: this._lateral(e.clientX ?? this.peakX) });
+      this.onDriveEnd?.({ lateral: this.lateral ?? 0 });
       this.power = 0;
     } else if (this.mode === 'charge') {
       this.mode = 'none';
@@ -198,15 +199,27 @@ export class SwipeSwing {
     }
   }
 
-  _lateral(x) {
-    // Where the thumb tracks relative to the top of the backswing shapes the
-    // shot: come down inside the line to draw it, outside to fade it.
-    return clamp((x - this.peakX) / (window.innerWidth * 0.22), -1, 1);
+  /**
+   * How far the stroke is cutting across the ball, -1 (left) to 1 (right).
+   *
+   * The *angle* of the downswing, not the sideways offset at the end of it.
+   * Offset alone made a long swipe that drifted two centimetres read the same
+   * as a short one that drifted two centimetres, when the first is dead
+   * straight and the second is slashing across. Dividing by how far the thumb
+   * has actually travelled down is what makes this a swing path.
+   *
+   * A quarter turn either side is the full range; the floor on travel stops a
+   * one-pixel wobble at the top of the swing reading as a wild angle.
+   */
+  _lateral(x, forward) {
+    const angle = Math.atan2(x - this.peakX, Math.max(forward, 14));
+    return clamp(angle / (28 * Math.PI / 180), -1, 1);
   }
 
   _drive(x, forward) {
     const progress = clamp(forward / this.driveSpan, 0, 1);
-    this.onDrive?.({ progress, lateral: this._lateral(x) });
+    this.lateral = this._lateral(x, forward);
+    this.onDrive?.({ progress, lateral: this.lateral });
   }
 
   // ------------------------------------------------------------- per frame

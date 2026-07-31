@@ -75,33 +75,38 @@
   #hint.show{opacity:1;transform:translateX(-50%) translateY(0)}
 
   /* ---------- power meter ---------- */
+  /* ---------- swing bar ----------
+     Vertical, on the right, and drawn as SVG rather than a div because the
+     fill has to bend. A thick stroked path gives both for free: the control
+     point bends it, and stroke-dashoffset fills it from the bottom up. */
   #power{
-    position:absolute;left:50%;bottom:58px;transform:translateX(-50%) translateY(10px) scaleX(.9);
-    width:230px;height:6px;border-radius:999px;
-    background:rgba(255,255,255,.42);
-    border:1px solid rgba(255,255,255,.6);
-    box-shadow:var(--shadow);
-    opacity:0;transition:opacity .35s ease,transform .45s cubic-bezier(.22,1,.36,1);
-    overflow:hidden;
+    position:absolute;right:max(18px,env(safe-area-inset-right,0px));top:50%;
+    transform:translateY(-50%) translateX(16px);
+    width:72px;height:320px;pointer-events:none;
+    opacity:0;transition:opacity .3s ease,transform .45s cubic-bezier(.22,1,.36,1);
   }
-  #power.show{opacity:1;transform:translateX(-50%) translateY(0) scaleX(1)}
-  /* Marks dead weight on a putt — the point where the ball finishes at the
-     cup. Only shown for the putter, where the meter is relative. */
-  #powerMark{
-    position:absolute;top:-4px;width:2px;height:14px;border-radius:2px;
-    background:rgba(30,60,45,.62);box-shadow:0 0 6px rgba(255,255,255,.7);
-    display:none;pointer-events:none;
+  #power.show{opacity:1;transform:translateY(-50%) translateX(0)}
+  #swingSvg{width:100%;height:100%;overflow:visible}
+  #swingTrack{
+    fill:rgba(255,255,255,.26);
+    stroke:rgba(255,255,255,.62);stroke-width:2;
   }
-  #powerMark.on{display:block}
-  #powerFill{
-    height:100%;width:0%;border-radius:999px;
-    background:linear-gradient(90deg,#a9e5a0 0%,#ffd97a 58%,#ff9f6b 100%);
-    transition:width .06s linear;
-    box-shadow:0 0 12px rgba(255,190,120,.55);
+  #swingFill{
+    fill:none;stroke:url(#swingGrad);stroke-width:30;stroke-linecap:round;
+    stroke-dasharray:100;stroke-dashoffset:100;
+    transition:stroke-dashoffset .06s linear;
+    filter:drop-shadow(0 0 9px rgba(255,190,120,.45));
   }
+  #swingMark{
+    stroke:rgba(28,58,44,.66);stroke-width:2.5;stroke-linecap:round;
+    opacity:0;transition:opacity .2s ease;
+  }
+  #swingMark.on{opacity:1}
+
   #powerLabel{
-    position:absolute;left:50%;bottom:74px;transform:translateX(-50%);
-    font-size:12px;font-weight:800;letter-spacing:.6px;opacity:0;
+    position:absolute;right:max(18px,env(safe-area-inset-right,0px));top:50%;
+    transform:translateY(-206px);width:72px;text-align:center;
+    font-size:13px;font-weight:800;letter-spacing:.6px;opacity:0;
     transition:opacity .3s ease;color:#fff;text-shadow:0 2px 10px rgba(20,60,80,.45)
   }
   #powerLabel.show{opacity:.95}
@@ -156,7 +161,8 @@
   @media (max-width:640px){
     .pill{font-size:12.5px;padding:8px 13px}
     #hint{font-size:12.5px;bottom:104px}
-    #power{width:190px}
+    #power{width:62px;height:270px}
+    #powerLabel{width:62px;transform:translateY(-180px)}
   }
 </style>
 
@@ -185,7 +191,20 @@
   <div id="shot" class="pill"></div>
 
   <div id="powerLabel"></div>
-  <div id="power"><div id="powerFill"></div><div id="powerMark"></div></div>
+  <div id="power">
+    <svg id="swingSvg" viewBox="0 0 72 320">
+      <defs>
+        <linearGradient id="swingGrad" x1="0" y1="1" x2="0" y2="0">
+          <stop offset="0%" stop-color="#a9e5a0"/>
+          <stop offset="58%" stop-color="#ffd97a"/>
+          <stop offset="100%" stop-color="#ff9f6b"/>
+        </linearGradient>
+      </defs>
+      <rect id="swingTrack" x="6" y="8" width="60" height="304" rx="30"/>
+      <path id="swingFill" pathLength="100" d="M36 294 Q 36 160 36 26"/>
+      <line id="swingMark" x1="11" y1="160" x2="61" y2="160"/>
+    </svg>
+  </div>
   <div id="hint" class="pill"></div>
   <div id="freecamHud" class="pill"></div>
 
