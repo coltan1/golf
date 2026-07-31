@@ -167,6 +167,16 @@ createServer(async (req, res) => {
     // anything can open. Local dev server only; it writes one flat filename
     // into one directory and accepts nothing else.
     if (req.method === 'POST' && path === '/shot') {
+      // Loopback only. This writes files to disk, and while the name is
+      // sanitised to one flat filename in one directory, a write endpoint has
+      // no business answering anyone but this machine — particularly once the
+      // server is reachable from outside, which is the whole point of the
+      // tunnel script next to it.
+      const from = req.socket.remoteAddress ?? '';
+      if (!/^(::1|::ffff:127\.|127\.)/.test(from)) {
+        res.writeHead(403, { 'Content-Type': 'text/plain' }).end('local only');
+        return;
+      }
       const chunks = [];
       for await (const c of req) chunks.push(c);
       const raw = Buffer.concat(chunks).toString('utf8');
