@@ -72,21 +72,29 @@ export class CameraRig {
 
       // ---- standing over the ball ----
       case 'address': {
-        // Offset to the player's side of the target line. Straight down the
-        // line the club would sit right on top of the ball; from here you can
-        // see both, and it frames like a broadcast tee shot.
+        // Centred on the ball, and very nearly straight down the line.
+        //
+        // This used to sit two and a half yards to the player's side and then
+        // look a further yard the *same* way, which put the ball off toward one
+        // edge of frame and the target line off toward the other. The reason
+        // for any offset at all is that dead behind, the club covers the ball —
+        // so there is still a little, but only enough to see past the shaft.
         const rx = Math.cos(ctx.aim), rz = Math.sin(ctx.aim);
-        const drift = Math.sin(this.time * 0.28) * 0.45; // a whisper of life
+        const drift = Math.sin(this.time * 0.28) * 0.22; // a whisper of life
         const back = lerp(10.6, 9.3, ctx.charge);
         const up = lerp(4.3, 3.9, ctx.charge);
-        const side = 2.5 + drift;
-        this.desiredPos.set(b.x - fwd.x * back + rx * side, b.y + up, b.z - fwd.z * back + rz * side);
-        // Look partway back toward the line so the fairway stays centred.
-        this.desiredLook.set(
-          b.x + fwd.x * 11 + rx * side * 0.45,
-          b.y + 1.5,
-          b.z + fwd.z * 11 + rz * side * 0.45
-        );
+        const side = 1.15 + drift;
+        const cx = b.x - fwd.x * back + rx * side;
+        const cz = b.z - fwd.z * back + rz * side;
+        this.desiredPos.set(cx, b.y + up, cz);
+        // Aim through the ball and on down the line beyond it. Deriving the
+        // gaze from the camera's own position rather than writing an offset by
+        // hand is what keeps the ball centred: change `back` or `side` and the
+        // framing follows, instead of drifting off by however much the two
+        // numbers now disagree.
+        const dx = b.x - cx, dz = b.z - cz;
+        const dl = Math.hypot(dx, dz) || 1;
+        this.desiredLook.set(b.x + (dx / dl) * 11, b.y + 1.5, b.z + (dz / dl) * 11);
         this.desiredFov = lerp(53, 50.5, ctx.charge);
         lamPos = 2.6; lamLook = 3.4;
         break;
