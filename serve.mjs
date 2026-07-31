@@ -14,6 +14,7 @@
 import { createServer } from 'node:http';
 import { mkdir, readFile, stat, writeFile } from 'node:fs/promises';
 import { extname, join, normalize, sep } from 'node:path';
+import { networkInterfaces } from 'node:os';
 
 const ROOT = process.cwd();
 const PORT = Number(process.argv[2] ?? 5177);
@@ -197,6 +198,31 @@ createServer(async (req, res) => {
   } catch {
     res.writeHead(404, { 'Content-Type': 'text/plain' }).end('not found');
   }
-}).listen(PORT, () => {
-  console.log(`Sunny Links dev server → http://localhost:${PORT}`);
+}).listen(PORT, '0.0.0.0', () => {
+  // Print every address this is actually reachable on, not just localhost.
+  //
+  // "localhost" is the one address that cannot work from another device — it
+  // means "this machine", so a phone typing it is asking itself for the game.
+  // Printing only that is a good way to make a working server look broken, so
+  // the LAN addresses go up front and are the ones to hand round for a match.
+  const lan = [];
+  for (const addrs of Object.values(networkInterfaces())) {
+    for (const a of addrs ?? []) {
+      if (a.family === 'IPv4' && !a.internal) lan.push(a.address);
+    }
+  }
+  console.log('');
+  console.log('  Sunny Links');
+  console.log(`  this machine   http://localhost:${PORT}`);
+  if (lan.length) {
+    for (const ip of lan) console.log(`  same wifi      http://${ip}:${PORT}`);
+    console.log('');
+    console.log('  For a 1v1, open a "same wifi" link on the other device and press the');
+    console.log('  crossed-swords button on both. If it will not load from the other');
+    console.log('  device, the server is fine — the block is between them: check both');
+    console.log('  are on this network rather than guest wifi or mobile data.');
+  } else {
+    console.log('  (no network interface found — only this machine can reach it)');
+  }
+  console.log('');
 });
