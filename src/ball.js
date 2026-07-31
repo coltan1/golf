@@ -79,11 +79,11 @@ const SURF = {
 const GRAVITY = 24;
 const RADIUS = 0.21;
 const REST_SPEED = 0.42;   // below this the ball is considered stopped
-// A shade wider and a shade more tolerant of pace than the true hole. A putt
-// that catches the edge with any speed on it should drop rather than horseshoe
-// out, which at this camera distance reads as the game being unfair.
-const CUP_RADIUS = 0.60;
-const CUP_SPEED = 5.8;
+// Barely wider than the ball. Enlarging this was doing the work that pace
+// should do — it turned bad strokes into makes without the player ever knowing
+// why, which is the least satisfying kind of help.
+const CUP_RADIUS = 0.52;
+const CUP_SPEED = 5.2;
 
 // --- soft round sprite, reused by the trail, the puff and the splash ---------
 function makeSoftSprite() {
@@ -252,7 +252,7 @@ export class Ball {
       // front of you is what putting actually is; judging it against an
       // invisible absolute scale is not.
       const need = Math.max(0.6, distToHole(this.pos.x, this.pos.z));
-      const want = need * (0.34 + p * 1.44);
+      const want = need * (0.14 + p * 1.72);
       // Inverse of the actual roll, so a requested distance comes out as one.
       //
       // The constant is measured, not derived. Rolling the real ball at known
@@ -262,10 +262,14 @@ export class Ball {
       // 24% too much speed and therefore about 55% too much distance. Every
       // putt inside twenty feet went in regardless of stroke, which is not
       // easier so much as pointless.
-      // 2.92, with the mapping above set so the midpoint lands just past the
-      // hole rather than just short. Dying at the front edge looks correct on
-      // paper and feels like a miss; a ball that reaches the cup with a little
-      // left has a chance of falling in.
+      // The midpoint is dead weight — the ball finishing at the cup, not past
+      // it. Landing it deliberately long turned every near miss into a make,
+      // which is a thumb on the scale rather than a putt.
+      //
+      // The span either side is deliberately wide: at 0.14x to 1.86x of the
+      // distance, being a tenth off the notch costs about 17% of the length,
+      // so a thirty-footer struck carelessly finishes five feet away. Narrowing
+      // that is what made this too forgiving before.
       const speed = 2.92 * Math.sqrt(Math.min(want, 26)) * lie;
       this.vel.copy(this.dir).multiplyScalar(speed);
       this.vel.y = 0;
