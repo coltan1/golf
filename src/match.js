@@ -19,8 +19,15 @@
 
 import * as THREE from 'three';
 import { Net } from './net.js';
+import { Golfer } from './golfer.js';
+import { makeToonRamp } from './terrain.js';
+import { heightAt, HOLE_POS } from './course.js';
 
 const GHOST_COLOUR = 0xff8a5c;
+// How long the opponent's backswing takes before the club comes down. Only
+// needs to look like a swing — the shot it produces was decided on their
+// machine and arrives separately.
+const OPP_BACKSWING_MS = 550;
 
 export class Match {
   constructor(scene) {
@@ -43,6 +50,16 @@ export class Match {
     this._ghostTo = new THREE.Vector3();
     this._ghostHas = false;
 
+    // The opponent, standing on the same grass as you. Built on the first look
+    // message and kept in the scene rather than the per-hole group, so changing
+    // hole does not throw them away.
+    this._ramp = null;
+    this._opp = null;
+    this._oppTo = new THREE.Vector3();
+    this._oppHas = false;
+    this._time = 0;
+    this.myLook = null;      // set by main.js so we can tell them how we look
+
     this.net.onState = (s, d) => this._state(s, d);
     this.net.onMessage = (m) => this._message(m);
   }
@@ -53,11 +70,12 @@ export class Match {
     try {
       await this.net.connect(name);
     } catch {
-      this.onStatus?.('No relay running — start the server and reload.', 'error');
+      this.onStatus?.('Could not reach a matchmaking broker — check your connection.', 'error');
     }
   }
 
   leave() {
+    clearTimeout(this._swingTimer);
     this.net.close();
     this.active = false;
     this._hideGhost();
@@ -71,6 +89,9 @@ export class Match {
       this.hole = 0;
       this.myTotal = this.oppTotal = 0;
       this._resetHole();
+      // Tell them what we look like. Both sides do this on matching, so each
+      // renders the other's actual customised golfer rather than a stand-in.
+      if (this.myLook) this.net.send({ t: 'look', look: this.myLook });
       this.onStatus?.(`Matched with ${d.opponent}`, 'good');
     } else if (s === 'left') {
       this.active = false;
@@ -100,6 +121,12 @@ export class Match {
       z: +pos.z.toFixed(2), s: strokes });
   }
 
+  /** We have struck the ball — let them watch us do it. */
+  reportSwing(hole, power) {
+    if (!this.active) return;
+    this.net.send({ t: 'swing', h: hole, p: +power.toFixed(3) });
+  }
+
   reportHoled(hole, strokes) {
     this.myStrokes = strokes;
     if (!this.active || this.myDone) return;
@@ -109,6 +136,12 @@ export class Match {
     this._checkHole();
   }
 
+  /** Push a restyle mid-match, so changing your kit shows up on their screen. */
+  sendLook(look) {
+    this.myLook = look;
+    if (this.active) this.net.send({ t: 'look', look });
+  }
+
   /** True while we are waiting on the other player to finish this hole. */
   get waitingForOpponent() {
     return this.active && this.myDone && !this.oppDone;
@@ -116,7 +149,13 @@ export class Match {
 
   // ------------------------------------------------------------ from the wire
   _message(m) {
-    if (!this.active || !m || m.h !== this.hole) return;
+    if (!this.active || !m) return;
+    // Appearance is not tied to a hole, so it is handled before the hole check
+    // — it usually arrives while both players are still on hole 1, but a late
+    // joiner or a reconnect should not lose it.
+    if (m.t === 'look') { this._buildOpponent(m.look); return; }
+    if (m.h !== this.hole) return;
+    if (m.t === 'swing') { this._playOpponentSwing(m.p ?? 0.6); return; }
     if (m.t === 'ball') {
       this.oppStrokes = m.s ?? this.oppStrokes;
       this._moveGhost(m.x, m.y, m.z);
@@ -128,6 +167,52 @@ export class Match {
       this._hideGhost();
       this._checkHole();
     }
+  }
+
+  // ------------------------------------------------------------ the opponent
+  /** Build (or restyle) the other player's golfer. */
+  _buildOpponent(look) {
+    if (!this._opp) {
+      this._ramp ??= makeToonRamp();
+      this._opp = new Golfer(this._ramp, look ?? undefined);
+      this._opp.visible = false;
+      this.scene.add(this._opp.root);
+    } else if (look) {
+      this._opp.setLook(look);
+    }
+  }
+
+  /**
+   * Put them where their ball is, facing the hole.
+   *
+   * Their golfer stands at the ball rather than being interpolated separately:
+   * a golfer and their ball are never in two places, and syncing one position
+   * cannot desynchronise from itself.
+   */
+  _placeOpponent(x, z) {
+    if (!this._opp) this._buildOpponent(null);
+    const y = heightAt(x, z);
+    const aim = Math.atan2(HOLE_POS.x - x, -(HOLE_POS.z - z));
+    this._opp.place(x, y, z, aim, !this._oppHas);
+    this._opp.visible = true;
+    this._oppHas = true;
+  }
+
+  /**
+   * Play their swing. Driven through the same rig a local swing uses, so it
+   * has the same weight shift, wrist release and finish — it just gets its
+   * numbers from the network instead of a thumb.
+   */
+  _playOpponentSwing(power) {
+    const g = this._opp;
+    if (!g) return;
+    g.forceIdle();
+    g.beginBackswing();
+    g.setCharge(Math.max(0, Math.min(1, power)));
+    clearTimeout(this._swingTimer);
+    this._swingTimer = setTimeout(() => {
+      if (g.beginDrive()) g.coastDrive(6 + power * 11);
+    }, OPP_BACKSWING_MS);
   }
 
   _checkHole() {
@@ -163,12 +248,21 @@ export class Match {
     this._ghostTo.set(x, y + 0.15, z);
     if (!this._ghostHas) { g.position.copy(this._ghostTo); this._ghostHas = true; }
     g.visible = true;
+    this._placeOpponent(x, z);
   }
 
-  _hideGhost() { if (this._ghost) this._ghost.visible = false; }
+  _hideGhost() {
+    if (this._ghost) this._ghost.visible = false;
+    if (this._opp) this._opp.visible = false;
+    this._oppHas = false;
+  }
 
   /** Glide the ghost rather than teleporting it, so the eye can follow it. */
   update(dt) {
+    this._time += dt;
+    // The opponent animates whether or not their ball is on screen — they are
+    // still standing there between shots, breathing and settling.
+    if (this._opp && this._opp.visible) this._opp.update(dt, this._time);
     const g = this._ghost;
     if (!g || !g.visible) return;
     g.position.lerp(this._ghostTo, Math.min(1, dt * 4));

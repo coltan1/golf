@@ -505,6 +505,9 @@ function wireHole() {
     game.state = 'swinging';
     game.pending.tempo = power;
     hud.showPower(false);
+    // Tell the opponent to play the same swing, before the ball result follows.
+    // Order matters: they see the strike, then where it finished.
+    match?.reportSwing(game.holeIndex, power);
     launchShot(power);
   };
   ball.onRest = () => { match?.reportRest(game.holeIndex, ball.pos, game.strokes); onBallRest(); };
@@ -658,6 +661,7 @@ function frame() {
  */
 function setupMatch() {
   match = new Match(scene);
+  match.myLook = playerLook;
 
   // A name that persists, so an opponent sees the same person twice.
   let name = localStorage.getItem('sunnylinks.name');
@@ -739,6 +743,7 @@ window.golfer = {
   set(partial) {
     playerLook = { ...playerLook, ...partial };
     if (golfer) golfer.setLook(playerLook);
+    match?.sendLook(playerLook);
     saveLook(playerLook);
     return { ...playerLook };
   },
@@ -746,6 +751,7 @@ window.golfer = {
     if (!LOOK_PRESETS[name]) return 'unknown preset — try ' + Object.keys(LOOK_PRESETS).join(', ');
     playerLook = { ...DEFAULT_LOOK, ...LOOK_PRESETS[name] };
     if (golfer) golfer.setLook(playerLook);
+    match?.sendLook(playerLook);
     saveLook(playerLook);
     return { ...playerLook };
   },
@@ -777,7 +783,7 @@ window.freecam = Object.assign(
     },
 
     /** Live handles on the render objects, for automated shading audits. */
-    dbg: () => ({ renderer, scene, camera, lights, terrain, game, golfer, input, rig, hud, THREE }),
+    dbg: () => ({ renderer, scene, camera, lights, terrain, game, golfer, input, rig, hud, match, THREE }),
 
     /** Jump straight to a hole by number (1-18), skipping the scorecard. */
     hole: (n) => {
