@@ -270,10 +270,10 @@ export class Match {
     g.scale.setScalar(1 + Math.sin(performance.now() * 0.004) * 0.06);
   }
 
-  get scoreline() {
+  /** Where the match stands, in words. The numbers live on the scoreboard. */
+  get lead() {
     if (!this.active) return '';
     const d = this.myTotal - this.oppTotal;
-    const lead = d < 0 ? `${-d} up` : d > 0 ? `${d} down` : 'all square';
-    return `You ${this.myTotal} · Them ${this.oppTotal} · ${lead}`;
+    return d < 0 ? `${-d} ahead` : d > 0 ? `${d} behind` : 'All square';
   }
 }

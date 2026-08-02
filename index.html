@@ -56,7 +56,36 @@
   }
   #freecamHud.show{opacity:1}
 
-  #topLeft{position:absolute;top:max(16px,env(safe-area-inset-top));left:16px}
+  #topLeft{
+    position:absolute;top:max(16px,env(safe-area-inset-top));left:16px;
+    display:flex;flex-direction:column;align-items:flex-start;gap:7px;
+  }
+
+  /* ---------- scoreboard ----------
+     Score belongs on its own, in a fixed place, in columns you can read at a
+     glance. It used to be a sentence — "You 0 · Them 0 · all square" — wedged
+     into a status line, which is the wrong shape for a number you check twenty
+     times a round. */
+  #scoreboard{
+    position:absolute;right:16px;top:max(62px,calc(env(safe-area-inset-top,0px) + 62px));
+    min-width:148px;padding:9px 12px 8px;text-align:left;
+    opacity:0;transform:translateY(-4px);
+    transition:opacity .3s ease,transform .3s cubic-bezier(.22,1,.36,1);
+  }
+  #scoreboard.on{opacity:1;transform:translateY(0)}
+  .sbRow{display:flex;align-items:baseline;justify-content:space-between;gap:14px;line-height:1.5}
+  .sbRow .sbName{font-size:12px;font-weight:700;opacity:.62;letter-spacing:.2px;
+    max-width:96px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .sbRow .sbScore{font-size:15px;font-weight:800;font-variant-numeric:tabular-nums}
+  .sbRow.lead .sbName{opacity:.9}
+  .sbRow.lead .sbScore{color:#1f7a4d}
+  .sbRow.trail .sbScore{opacity:.55}
+  #sbThem{display:none}
+  #scoreboard.match #sbThem{display:flex}
+  #sbState{display:none;margin-top:6px;padding-top:6px;border-top:1px solid rgba(40,70,90,.16);
+    font-size:11.5px;font-weight:800;letter-spacing:.3px;opacity:.75}
+  #scoreboard.match #sbState{display:block}
+
   #topRight{position:absolute;top:max(16px,env(safe-area-inset-top));right:16px}
 
   #btnSound{
@@ -179,13 +208,21 @@
 <div id="vignette"></div>
 
 <div id="hud">
-  <div id="topLeft" class="pill">
-    <span id="holeNo">Hole 1</span><span class="sep">·</span><span id="holeName">—</span><span class="sep">·</span><span id="holePar" class="dim">Par 4</span><span class="sep">·</span><span id="holeYds" class="dim">— yds</span>
+  <div id="topLeft">
+    <div class="pill">
+      <span id="holeNo">Hole 1</span><span class="sep">·</span><span id="holeName">—</span><span class="sep">·</span><span id="holePar" class="dim">Par 4</span><span class="sep">·</span><span id="holeYds" class="dim">— yds</span>
+    </div>
+    <div class="pill"><span id="strokes">Stroke 1</span></div>
   </div>
 
   <div id="topRight" class="row">
-    <div class="pill"><span id="strokes">Stroke 1</span></div>
     <div class="pill" id="btnSound" title="Sound">🔊</div>
+  </div>
+
+  <div id="scoreboard" class="pill">
+    <div class="sbRow" id="sbMe"><span class="sbName">You</span><span class="sbScore">E</span></div>
+    <div class="sbRow" id="sbThem"><span class="sbName">—</span><span class="sbScore">E</span></div>
+    <div id="sbState"></div>
   </div>
 
   <div id="shot" class="pill"></div>

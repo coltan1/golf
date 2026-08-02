@@ -300,6 +300,7 @@ function beginHole() {
   refreshShot();
   hud.hideCard();
   hud.setHole(HOLE.n, HOLE.name, PAR, HOLE_LENGTH);
+  refreshScore();
   rig.setMode('intro');
   rig.introT = 0;
   rig.update(0.016, camCtx());
@@ -365,6 +366,7 @@ function onHoled() {
   hud.hint('');
   setTimeout(() => {
     game.total += game.strokes - PAR;
+    refreshScore();
     const rel = game.total === 0 ? 'level' : game.total > 0 ? `+${game.total}` : `${game.total}`;
     const last = game.holeIndex === HOLES.length - 1;
     hud.card(
@@ -485,6 +487,29 @@ function wireInput() {
 
   hud.onSound((on) => audio.setEnabled(on));
 
+}
+
+/**
+ * Push the round score to the scoreboard.
+ *
+ * Relative to par in both modes, so the number means the same thing whether or
+ * not there is an opponent. Par is summed here rather than in match.js because
+ * this is where the hole definitions live, and both players computing it from
+ * the same table is what keeps the two scoreboards agreeing.
+ */
+function refreshScore() {
+  if (match?.active) {
+    let par = 0;
+    for (let i = 0; i < match.hole && i < HOLES.length; i++) par += HOLES[i].par;
+    hud.setScore({
+      me: match.myTotal - par,
+      them: match.oppTotal - par,
+      themName: match.net.opponent ?? 'Opponent',
+      state: match.lead,
+    });
+  } else {
+    hud.setScore({ me: game.total });
+  }
 }
 
 /** The one path that changes hole, shared by the scorecard and by a match. */
@@ -697,8 +722,9 @@ function setupMatch() {
   document.getElementById('hud')?.appendChild(status);
 
   match.onStatus = (text, kind) => {
-    status.textContent = text ? `${text}${match.active ? ' · ' + match.scoreline : ''}` : '';
+    status.textContent = text ?? '';
     status.className = 'pill ' + (kind || '') + (text ? ' on' : '');
+    refreshScore();
   };
   // Both players are in: move on together, from wherever either of them was.
   match.onAdvance = () => goToHole(match.hole % HOLES.length, match.hole === 0);

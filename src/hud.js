@@ -69,6 +69,8 @@ export class Hud {
       btnSound: $('btnSound'),
       freecam: $('freecamHud'),
       loader: $('loader'),
+      scoreboard: $('scoreboard'),
+      sbMe: $('sbMe'), sbThem: $('sbThem'), sbState: $('sbState'),
       swingFill: $('swingFill'),
       swingStops: ['swingStop0', 'swingStop1', 'swingStop2'].map($),
       swingMark: $('swingMark'),
@@ -97,6 +99,36 @@ export class Hud {
   }
 
   /** Hole number, name, par and measured length. */
+  /**
+   * The round score, in columns.
+   *
+   * `me` and `them` are strokes relative to par, already computed — the HUD
+   * should not have to know what par is, and both sides of a match have to
+   * agree on the arithmetic anyway, so it happens once where the holes live.
+   * `them` of null means there is no opponent and the second row disappears.
+   */
+  setScore({ me = 0, them = null, themName = 'Opponent', state = '' } = {}) {
+    const fmt = (v) => (v === 0 ? 'E' : v > 0 ? `+${v}` : `${v}`);
+    const board = this.el.scoreboard;
+    if (!board) return;
+    board.classList.add('on');
+    board.classList.toggle('match', them !== null);
+
+    this.el.sbMe.querySelector('.sbScore').textContent = fmt(me);
+    if (them !== null) {
+      this.el.sbThem.querySelector('.sbName').textContent = themName;
+      this.el.sbThem.querySelector('.sbScore').textContent = fmt(them);
+      // Lower is better in golf, so the leader is the smaller number.
+      this.el.sbMe.classList.toggle('lead', me < them);
+      this.el.sbMe.classList.toggle('trail', me > them);
+      this.el.sbThem.classList.toggle('lead', them < me);
+      this.el.sbThem.classList.toggle('trail', them > me);
+      this.el.sbState.textContent = state;
+    } else {
+      this.el.sbMe.classList.remove('lead', 'trail');
+    }
+  }
+
   setHole(number, name, par, yards) {
     this.el.holeNo.textContent = `Hole ${number}`;
     this.el.holeName.textContent = name;
