@@ -17,7 +17,7 @@ import { createTerrain, createWater, createOcean, createCreek, makeToonRamp, mak
 import { createSky, createLights, createClouds, createBackdrop, FOG_COLOR, timeOfDay, setTimeOfDay } from './scenery.js';
 import {
   createTrees, createGrass, createClubhouse, createFlag, createTeeMarkers, createBridge,
-  createSeaStacks,
+  createSeaStacks, createLavaRocks,
   treeMapTexture,
 } from './props.js';
 import { Golfer, DEFAULT_LOOK, LOOK_PRESETS } from './golfer.js';
@@ -25,7 +25,7 @@ import { Ball, CLUBS, pickClub } from './ball.js';
 import { SwipeSwing } from './input.js';
 import { CameraRig } from './camerarig.js';
 import { AimLine } from './aimline.js';
-import { createSunRays, createButterflies, createSeagulls, createMotes } from './ambience.js';
+import { createSunRays, createButterflies, createSeagulls, createMotes, createSpray } from './ambience.js';
 import { FreeCam } from './freecam.js';
 import { Audio } from './audio.js';
 import { Hud, scoreName } from './hud.js';
@@ -64,7 +64,7 @@ const hud = new Hud();
 const audio = new Audio();
 
 // ---------------------------------------------------------------- world
-let terrain, water, ocean, creek, clouds, flag, clubhouse, golfer, ball, rig, aimLine, input, lights, freeCam;
+let terrain, water, ocean, spray, creek, clouds, flag, clubhouse, golfer, ball, rig, aimLine, input, lights, freeCam;
 let sunRays, fliers, motes;
 let match = null;
 
@@ -153,7 +153,11 @@ function buildWorld() {
   // dimensions, so neither may be called when that feature is absent.
   water = POND ? add(createWater()) : null;
   ocean = OCEAN ? add(createOcean()) : null;
-  if (OCEAN) add(createSeaStacks(ramp));
+  if (OCEAN) {
+    add(createSeaStacks(ramp));
+    add(createLavaRocks(ramp));
+    spray = add(createSpray());
+  } else spray = null;
   creek = CREEK ? add(createCreek()) : null;
   if (CREEK) { const b = createBridge(ramp); if (b) add(b); }
 
@@ -660,6 +664,7 @@ function frame() {
   match?.update(dt);
   if (water) water.userData.tick(time);
   if (ocean) ocean.userData.tick(time);
+  if (spray) spray.userData.tick(dt);
   if (creek) creek.userData.tick(time);
   flag.userData.tick(time);
   clubhouse.userData.tick(dt);

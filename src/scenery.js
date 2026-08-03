@@ -11,6 +11,7 @@
 
 import * as THREE from 'three';
 import { OCEAN } from './course.js';
+import { COURSE } from './courses.js';
 import { mulberry32, lerp, fbm2 } from './util.js';
 import { WORLD_CX, WORLD_CZ } from './course.js';
 
@@ -258,14 +259,18 @@ export function createBackdrop(toonRamp) {
   // the arc facing out to water — a wall of hills behind an ocean is the one
   // thing that would give away that it is not one.
   const seaA = OCEAN ? Math.atan2(OCEAN.seaward.x, OCEAN.seaward.z) : null;
-  const openWater = (a) => {
-    if (seaA === null) return false;
-    let d = Math.abs(((a - seaA + Math.PI) % (Math.PI * 2)) - Math.PI);
-    // Generous, and it has to be. A ridge is up to six hundred yards wide, so
-    // one whose centre sits comfortably inland still hangs its shoulder over
-    // the water — ±66° left a wall of hills standing behind the sea.
-    return d < 1.62;                    // ±93°: the whole seaward half
-  };
+  // Tested by position, not by angle.
+  //
+  // An angular window is the obvious test and it does not work: a ridge is up
+  // to six hundred yards wide, so one whose *centre* sits comfortably outside
+  // the window still hangs most of itself over the water, and opening the
+  // window far enough to catch that starts eating the land behind the player.
+  // Where the ridge actually stands is the thing that matters, so that is what
+  // gets measured — anything on the seaward side of the world, plus a margin
+  // for its own width, is dropped.
+  const openWater = (x, z) =>
+    OCEAN !== null && OCEAN !== undefined &&
+    (x - WORLD_CX) * OCEAN.seaward.x + (z - WORLD_CZ) * OCEAN.seaward.z > -420;
 
   // Near ridges are discrete with gaps, so the hazier layers behind show
   // through them; far ridges are dense and continuous to close the horizon.
@@ -321,7 +326,7 @@ export function createBackdrop(toonRamp) {
       const r = L.ringR * lerp(0.9, 1.12, rnd());
       // Drawn from `rnd` before the skip, so removing a ridge never reshuffles
       // the ones that remain.
-      const skip = openWater(a);
+      const skip = openWater(WORLD_CX + Math.sin(a) * r, WORLD_CZ + Math.cos(a) * r);
       const geo = forestRidgeGeo(
         rnd,
         lerp(L.w[0], L.w[1], rnd()),
@@ -413,7 +418,11 @@ export function createClouds() {
   const rnd = mulberry32(9182);
   const drift = [];
 
-  for (let i = 0; i < 20; i++) {
+  // Trade-wind cumulus over the water: more of them, bigger, and sitting
+  // lower. A coast has weather standing on the horizon in a way an inland
+  // course does not, and half of what makes a sea view is what is above it.
+  const coastal = !!COURSE.coastal;
+  for (let i = 0; i < (coastal ? 34 : 20); i++) {
     const mat = new THREE.SpriteMaterial({
       map: tex,
       transparent: true,
@@ -423,11 +432,12 @@ export function createClouds() {
       color: new THREE.Color().setHSL(0.58, 0.22, lerp(0.95, 1.0, rnd())),
     });
     const sp = new THREE.Sprite(mat);
-    const scale = lerp(140, 330, rnd());
-    sp.scale.set(scale, scale * lerp(0.40, 0.58, rnd()), 1);
+    const scale = coastal ? lerp(210, 520, rnd()) : lerp(140, 330, rnd());
+    sp.scale.set(scale, scale * (coastal ? lerp(0.46, 0.70, rnd())
+                                         : lerp(0.40, 0.58, rnd())), 1);
     sp.position.set(
       lerp(-1100, 1100, rnd()),
-      lerp(230, 460, rnd()),
+      coastal ? lerp(170, 430, rnd()) : lerp(230, 460, rnd()),
       lerp(-1500, 400, rnd())
     );
     sp.renderOrder = -50;

@@ -14,6 +14,7 @@
  */
 
 import { CatmullRomCurve3, Vector3 } from 'three';
+import { COURSE } from './courses.js';
 import { clamp, lerp, smoothstep, fbm2, mulberry32 } from './util.js';
 import { HOLES } from './holes.js';
 
@@ -522,8 +523,17 @@ export function heightAt(x, z) {
   if (OCEAN) {
     const se = OCEAN.side > 0 ? OCEAN.off[n.i] + n.perp : -n.perp - OCEAN.off[n.i];
     seaward = 1 - smoothstep(-6.0, 1.5, se);
-    // A lip of broken rock just inside the edge.
-    h += 1.4 * (1 - smoothstep(0, 8, Math.abs(se - 4)));
+    // The last thirty yards fall away toward the edge.
+    //
+    // Not decoration — it is what lets you see the water. The sea is thirty
+    // yards below the cliff top, so from anywhere on flat ground it is hidden
+    // behind the lip and the hole plays beside an ocean you cannot see. A
+    // shoulder falling five yards over thirty tips the whole view outward and
+    // the water comes up into frame. Suppressed over the green, which is a
+    // built pad and must stay a pad.
+    h -= 5.0 * (1 - smoothstep(2, 34, se)) * (1 - gb);
+    // A lip of broken rock right at the edge, on top of the fall.
+    h += 1.6 * (1 - smoothstep(0, 7, Math.abs(se - 3)));
   }
   const onLand = 1 - seaward;
 
@@ -692,6 +702,12 @@ export const SURFACE_COLORS = {
   // a course like this, and the thing that keeps the green from running
   // straight into the blue.
   scrub:    [0xa8, 0x9c, 0x62],
+  // Burnt native rough. Lush green next to a lava cliff reads as a lawn that
+  // someone has been watering, which is the opposite of the place.
+  roughCoast:  [0x8f, 0x91, 0x50],
+  // The first few yards off the fairway: still green, just tired.
+  roughCoastNear: [0x74, 0x95, 0x52],
+  roughCoastB: [0xa9, 0x9c, 0x5a],
   ocean:    [0x14, 0x44, 0x6e],
   straw:    [0x9d, 0x6b, 0x3e],
   strawAlt: [0x85, 0x56, 0x31],
@@ -800,6 +816,23 @@ export function makeCourseTexture(size = 2048) {
 
       const deepen = smoothstep(50, 95, n.dist);
       mix(col, C.deep, deepen * 0.75, col);
+
+      // --- burnt coastal rough ---
+      // Only the fairways and greens are watered on a headland; everything
+      // else is the colour the wind and the salt leave it. Keyed off distance
+      // from the mown line rather than painted flat, so the change happens at
+      // the mower's edge where the eye expects it.
+      if (COURSE.coastal) {
+        // Spread over twenty yards rather than fifteen, and starting a few
+        // yards out from the cut. Beginning it at the mowing line put a hard
+        // tan stripe hard against the fairway that read as a dirt path — the
+        // change of colour has to happen well clear of the change of height,
+        // or the two edges stack into one that looks built.
+        const hwC = fairwayHalfWidth(n.t);
+        const offCut = smoothstep(hwC + 4, hwC + 26, n.dist);
+        mix(C.roughCoast, C.roughCoastB, mott, tmp);
+        mix(col, tmp, offCut * (0.50 + 0.34 * dry), col);
+      }
 
       // --- fairway, mown in passes running down the line of play ---
       const hw = fairwayHalfWidth(n.t);

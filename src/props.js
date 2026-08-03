@@ -133,6 +133,60 @@ function makeFrondGeo(coarse = false) {
   return g;
 }
 
+/**
+ * A broken chunk of lava, for anything that wants to be a rock.
+ *
+ * One geometry, three uses: sea stacks standing offshore, talus piled at the
+ * foot of the cliff, and outcrops pushing through the turf inland. They are the
+ * same rock, so they are the same shape at different scales and squashes —
+ * three separate geometries would only be three chances for one of them to
+ * stop matching the others.
+ */
+function makeRockGeo(sides = 6) {
+  const g = new THREE.ConeGeometry(1, 1, sides, 2);
+  const p = g.attributes.position;
+  for (let i = 0; i < p.count; i++) {
+    const h = hash3(p.getX(i) * 9.1, p.getY(i) * 7.7, p.getZ(i) * 5.3);
+    const h2 = hash3(p.getZ(i) * 4.3, p.getX(i) * 6.1, p.getY(i) * 8.9);
+    p.setXYZ(i,
+      p.getX(i) * (0.66 + h * 0.68),
+      p.getY(i) * (0.82 + h2 * 0.36),
+      p.getZ(i) * (0.66 + h2 * 0.68));
+  }
+  g.computeVertexNormals();
+  g.translate(0, 0.5, 0);
+  return g;
+}
+
+/** A soft white disc, for the foam collar round anything standing in water. */
+function foamTexture() {
+  const S = 128;
+  const cv = document.createElement('canvas');
+  cv.width = cv.height = S;
+  const ctx = cv.getContext('2d');
+  // A ring, not a blob: the water right against the rock is churned, a few
+  // yards out it is not, and a filled disc reads as a puddle of milk.
+  const g = ctx.createRadialGradient(S / 2, S / 2, S * 0.16, S / 2, S / 2, S * 0.5);
+  g.addColorStop(0.00, 'rgba(255,255,255,0)');
+  g.addColorStop(0.34, 'rgba(255,255,255,0.85)');
+  g.addColorStop(0.62, 'rgba(255,255,255,0.42)');
+  g.addColorStop(1.00, 'rgba(255,255,255,0)');
+  ctx.fillStyle = g;
+  ctx.fillRect(0, 0, S, S);
+  // Torn at the edge. A perfect annulus is a target painted on the sea.
+  ctx.globalCompositeOperation = 'destination-out';
+  for (let i = 0; i < 90; i++) {
+    const a = (i / 90) * Math.PI * 2;
+    const r = S * (0.30 + 0.22 * Math.abs(Math.sin(a * 3.1) * Math.cos(a * 5.7)));
+    ctx.beginPath();
+    ctx.arc(S / 2 + Math.cos(a) * r, S / 2 + Math.sin(a) * r, S * 0.055, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  const tex = new THREE.CanvasTexture(cv);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  return tex;
+}
+
 /** A shell: half an ellipsoid with a few ribs, small enough to be a suggestion. */
 function makeShellGeo() {
   const g = new THREE.SphereGeometry(0.5, 9, 5, 0, Math.PI * 2, 0, Math.PI * 0.5);
@@ -495,7 +549,7 @@ export function createTrees(toonRamp) {
   // parkland course; what grows in salt wind above a cliff is dry scrub, and
   // this pass is replaced by tussocks in the same places when the course says
   // it is coastal.
-  for (let i = 0; i < (COURSE.coastal ? 90 : 170); i++) {
+  for (let i = 0; i < (COURSE.coastal ? 260 : 170); i++) {
     const z = lerp(zNear, zFar, rnd());
     const side = rnd() < 0.5 ? 1 : -1;
     const cx = centreXAt(z) + side * lerp(22, 52, rnd());
@@ -700,39 +754,34 @@ export function createSeaStacks(toonRamp) {
   const zFar = WORLD_CZ - WORLD_SIZE * 0.34;
   const picks = [];
 
-  for (let i = 0; i < 900 && picks.length < 34; i++) {
+  for (let i = 0; i < 1600 && picks.length < 46; i++) {
     const z = lerp(zNear, zFar, rnd());
     // Straight out from the centreline, so the darts land in the water rather
     // than mostly inland where they would all be thrown away.
-    const out = lerp(6, 120, Math.pow(rnd(), 1.4));
-    const x = centreXAt(z) + OCEAN.seaward.x * out + lerp(-24, 24, rnd());
+    const out = lerp(6, 130, Math.pow(rnd(), 1.4));
+    const x = centreXAt(z) + OCEAN.seaward.x * out + lerp(-26, 26, rnd());
     const zz = z + OCEAN.seaward.z * out;
     const se = shoreEdge(x, zz);
-    // Off the rocks but not out to sea: a stack a hundred yards offshore is a
+    // Off the rocks but not out to sea: a stack a hundred yards offshore is an
     // island, and this is a coastline, not an archipelago.
-    if (se > -6 || se < -95) continue;
-    picks.push({ x, z: zz, se });
+    if (se > -5 || se < -105) continue;
+    picks.push({ x, z: zz, se, r: 0 });
   }
-
   if (!picks.length) return group;
 
-  // Four sides, so every stack is a chunk with flat faces that catch the cel
-  // ramp differently — a smooth cone would shade as one band and read as a
-  // traffic cone.
-  const geo = new THREE.ConeGeometry(1, 1, 5, 2);
-  const p = geo.attributes.position;
-  for (let i = 0; i < p.count; i++) {
-    const h = hash3(p.getX(i) * 9.1, p.getY(i) * 7.7, p.getZ(i) * 5.3);
-    p.setXYZ(i, p.getX(i) * (0.72 + h * 0.56), p.getY(i), p.getZ(i) * (0.72 + h * 0.56));
+  // Talus — the rubble the cliff has already shed, heaped along its foot.
+  // Rejection-sampled the same way but hugging the rock rather than standing
+  // off it, so the wall meets the water in a mess rather than in a line.
+  const talus = [];
+  for (let i = 0; i < 2600 && talus.length < 260; i++) {
+    const z = lerp(zNear, zFar, rnd());
+    const out = lerp(1, 26, Math.pow(rnd(), 1.5));
+    const x = centreXAt(z) + OCEAN.seaward.x * out + lerp(-30, 30, rnd());
+    const zz = z + OCEAN.seaward.z * out;
+    const se = shoreEdge(x, zz);
+    if (se > 1 || se < -30) continue;
+    talus.push({ x, z: zz, se, r: 0 });
   }
-  geo.computeVertexNormals();
-  geo.translate(0, 0.5, 0);
-
-  const mesh = new THREE.InstancedMesh(
-    geo,
-    new THREE.MeshToonMaterial({ color: 0xffffff, gradientMap: toonRamp, flatShading: true }),
-    picks.length
-  );
 
   const m = new THREE.Matrix4();
   const q = new THREE.Quaternion();
@@ -740,24 +789,175 @@ export function createSeaStacks(toonRamp) {
   const pos = new THREE.Vector3();
   const scl = new THREE.Vector3();
   const col = new THREE.Color();
+  const rockMat = () => new THREE.MeshToonMaterial({
+    color: 0xffffff, gradientMap: toonRamp, flatShading: true,
+  });
 
-  picks.forEach((s, i) => {
+  // ---- the stacks themselves ----
+  const stackMesh = new THREE.InstancedMesh(makeRockGeo(5), rockMat(), picks.length);
+  picks.forEach((p, i) => {
     // Bigger close in, where they are the ruins of the cliff, and lower
     // further out where only the stubborn ones are left.
-    const near = 1 - Math.min(1, -s.se / 95);
-    const r = lerp(2.6, 7.5, rnd()) * lerp(0.6, 1.0, near);
-    const h = lerp(5, 21, rnd()) * lerp(0.45, 1.0, near);
-    e.set(lerp(-0.10, 0.10, rnd()), rnd() * Math.PI * 2, lerp(-0.10, 0.10, rnd()));
+    const near = 1 - Math.min(1, -p.se / 105);
+    const r = lerp(2.6, 8.5, rnd()) * lerp(0.55, 1.0, near);
+    const h = lerp(5, 24, rnd()) * lerp(0.40, 1.0, near);
+    p.r = r;
+    e.set(lerp(-0.12, 0.12, rnd()), rnd() * Math.PI * 2, lerp(-0.12, 0.12, rnd()));
     // Based below the waterline so the sea meets rock rather than a floating rim.
-    m.compose(pos.set(s.x, OCEAN.y - 5, s.z), q.setFromEuler(e), scl.set(r, h, r));
+    m.compose(pos.set(p.x, OCEAN.y - 6, p.z), q.setFromEuler(e), scl.set(r, h, r));
+    stackMesh.setMatrixAt(i, m);
+    col.setHSL(0.58, lerp(0.03, 0.09, rnd()), lerp(0.17, 0.30, rnd()));
+    stackMesh.setColorAt(i, col);
+  });
+  stackMesh.instanceMatrix.needsUpdate = true;
+  if (stackMesh.instanceColor) stackMesh.instanceColor.needsUpdate = true;
+  stackMesh.castShadow = false;
+  stackMesh.frustumCulled = false;
+  group.add(stackMesh);
+
+  // ---- talus ----
+  if (talus.length) {
+    const tMesh = new THREE.InstancedMesh(makeRockGeo(6), rockMat(), talus.length);
+    talus.forEach((t, i) => {
+      const r = lerp(0.9, 4.2, rnd());
+      t.r = r;
+      e.set(lerp(-0.5, 0.5, rnd()), rnd() * Math.PI * 2, lerp(-0.5, 0.5, rnd()));
+      m.compose(pos.set(t.x, OCEAN.y - 3 + lerp(0, 5, rnd()), t.z),
+                q.setFromEuler(e), scl.set(r, r * lerp(0.5, 1.1, rnd()), r));
+      tMesh.setMatrixAt(i, m);
+      col.setHSL(0.58, lerp(0.02, 0.08, rnd()), lerp(0.15, 0.28, rnd()));
+      tMesh.setColorAt(i, col);
+    });
+    tMesh.instanceMatrix.needsUpdate = true;
+    if (tMesh.instanceColor) tMesh.instanceColor.needsUpdate = true;
+    tMesh.castShadow = false;
+    tMesh.frustumCulled = false;
+    group.add(tMesh);
+  }
+
+  // ---- foam collars ----
+  //
+  // Flat discs lying on the water round everything standing in it. The sea is
+  // one plane with no idea what is poking through it, so the churn has to be
+  // drawn by whatever is doing the poking — and a rock meeting the water with
+  // a clean silhouette looks pasted on however good the rock is.
+  // Only round the things big enough to break a wave. A collar on every
+  // pebble merged into one milky sheet across the whole bay — the churn has
+  // to be sparse or it stops reading as churn.
+  const collars = picks.concat(talus.filter((t) => t.r > 2.4));
+  const foam = new THREE.PlaneGeometry(1, 1);
+  foam.rotateX(-Math.PI / 2);
+  const foamMesh = new THREE.InstancedMesh(
+    foam,
+    new THREE.MeshBasicMaterial({
+      map: foamTexture(), transparent: true, depthWrite: false,
+      opacity: 0.42, toneMapped: false,
+    }),
+    collars.length
+  );
+  const rnd2 = mulberry32(771);
+  collars.forEach((c, i) => {
+    const w = (c.r || 2.4) * lerp(2.4, 3.4, rnd2());
+    e.set(0, rnd2() * Math.PI * 2, 0);
+    // A shade above the surface: level with it, the two planes fight.
+    m.compose(pos.set(c.x, OCEAN.y + 0.35, c.z), q.setFromEuler(e), scl.set(w, 1, w));
+    foamMesh.setMatrixAt(i, m);
+  });
+  foamMesh.instanceMatrix.needsUpdate = true;
+  foamMesh.castShadow = false;
+  foamMesh.frustumCulled = false;
+  foamMesh.renderOrder = 2;
+  group.add(foamMesh);
+
+  return group;
+}
+
+/**
+ * Lava pushing through the turf.
+ *
+ * The photographs of a course like this are never grass to the horizon: the
+ * ground is broken, and dark rock comes through it in ribs and scatters
+ * wherever the mower does not go. Without them the inland half of every hole
+ * is a green field that happens to end at a cliff.
+ *
+ * Laid in seams rather than sprinkled. Scattering rock one piece at a time
+ * gives gravel; a lava field is bands, and a band is a run of chunks along a
+ * line with the gaps left where they fall.
+ */
+export function createLavaRocks(toonRamp) {
+  const group = new THREE.Group();
+  group.name = 'lavaRocks';
+  if (!OCEAN) return group;
+
+  const rnd = mulberry32(31770);
+  const zNear = TEE.z + 14;
+  const zFar = WORLD_CZ - WORLD_SIZE * 0.40;
+  const rocks = [];
+
+  for (let seam = 0; seam < 26; seam++) {
+    const z = lerp(zNear, zFar, rnd());
+    const side = rnd() < 0.5 ? 1 : -1;
+    const n0 = nearest(centreXAt(z), z);
+    const off = fairwayHalfWidth(n0.t) + lerp(6, 70, Math.pow(rnd(), 1.3));
+    const ang = rnd() * Math.PI * 2;
+    const run = lerp(14, 46, rnd());
+    const count = 6 + Math.floor(rnd() * 12);
+    const seamL = lerp(0.14, 0.30, rnd());
+    for (let i = 0; i < count; i++) {
+      const t = i / count;
+      const x = centreXAt(z) + side * off + Math.cos(ang) * (t - 0.5) * run + lerp(-4, 4, rnd());
+      const zz = z + Math.sin(ang) * (t - 0.5) * run + lerp(-4, 4, rnd());
+      const n = nearest(x, zz);
+      if (n.dist < fairwayHalfWidth(n.t) + 4) continue;   // never on the short grass
+      if (greenEdge(x, zz) > -6) continue;
+      if (bunkerEdge(x, zz) > -2) continue;
+      if (!ashore(x, zz, 3)) continue;
+      const y = heightAt(x, zz);
+      if (y < -2) continue;
+      rocks.push({ x, y, z: zz, s: lerp(0.7, 3.4, rnd()), l: seamL + lerp(-0.04, 0.04, rnd()) });
+    }
+  }
+
+  // And loose stones everywhere else in the long stuff.
+  for (let i = 0; i < 2200 && rocks.length < 900; i++) {
+    const z = lerp(zNear, zFar, rnd());
+    const side = rnd() < 0.5 ? 1 : -1;
+    const n0 = nearest(centreXAt(z), z);
+    const x = centreXAt(z) + side * (fairwayHalfWidth(n0.t) + lerp(4, 110, Math.pow(rnd(), 1.6)));
+    const n = nearest(x, z);
+    if (n.dist < fairwayHalfWidth(n.t) + 3) continue;
+    if (greenEdge(x, z) > -5) continue;
+    if (bunkerEdge(x, z) > -2) continue;
+    if (!ashore(x, z, 2)) continue;
+    const y = heightAt(x, z);
+    if (y < -2) continue;
+    rocks.push({ x, y, z, s: lerp(0.4, 1.7, rnd()), l: lerp(0.15, 0.30, rnd()) });
+  }
+  if (!rocks.length) return group;
+
+  const mesh = new THREE.InstancedMesh(
+    makeRockGeo(6),
+    new THREE.MeshToonMaterial({ color: 0xffffff, gradientMap: toonRamp, flatShading: true }),
+    rocks.length
+  );
+  const m = new THREE.Matrix4();
+  const q = new THREE.Quaternion();
+  const e = new THREE.Euler();
+  const pos = new THREE.Vector3();
+  const scl = new THREE.Vector3();
+  const col = new THREE.Color();
+  rocks.forEach((r, i) => {
+    e.set(lerp(-0.45, 0.45, rnd()), rnd() * Math.PI * 2, lerp(-0.45, 0.45, rnd()));
+    // Sunk a little, so they sit in the ground rather than on it.
+    m.compose(pos.set(r.x, r.y - r.s * 0.22, r.z), q.setFromEuler(e),
+              scl.set(r.s, r.s * lerp(0.42, 0.95, rnd()), r.s));
     mesh.setMatrixAt(i, m);
-    // The same weathered lava as the cliff, and the same spread of tone.
-    col.setHSL(0.08, lerp(0.04, 0.10, rnd()), lerp(0.20, 0.33, rnd()));
+    col.setHSL(0.09, lerp(0.03, 0.10, rnd()), r.l);
     mesh.setColorAt(i, col);
   });
   mesh.instanceMatrix.needsUpdate = true;
   if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
-  mesh.castShadow = false;
+  mesh.castShadow = true;
   mesh.frustumCulled = false;
   group.add(mesh);
   return group;

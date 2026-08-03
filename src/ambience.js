@@ -14,6 +14,7 @@ import { mulberry32, lerp } from './util.js';
 import { timeOfDay } from './scenery.js';
 import {
   heightAt, centreXAt, fairwayHalfWidth, nearest, TEE, WORLD_CZ, WORLD_SIZE, POND, OCEAN,
+  shoreEdge,
 } from './course.js';
 
 // Light travels the opposite way to the sun's offset. Derived rather than
@@ -428,6 +429,110 @@ export function createSeagulls() {
       }
     });
     mesh.instanceMatrix.needsUpdate = true;
+  };
+
+  return group;
+}
+
+// ---------------------------------------------------------------- spray
+/** A soft plume, for the burst of white where a wave hits rock. */
+function sprayTexture() {
+  const S = 128;
+  const cv = document.createElement('canvas');
+  cv.width = cv.height = S;
+  const ctx = cv.getContext('2d');
+  // Several overlapping puffs rather than one, so the silhouette is lumpy —
+  // a single radial gradient reads as a headlight.
+  const puffs = [
+    [0.50, 0.62, 0.30], [0.34, 0.70, 0.20], [0.66, 0.70, 0.21],
+    [0.44, 0.44, 0.19], [0.60, 0.46, 0.17], [0.50, 0.30, 0.13],
+  ];
+  for (const [cx, cy, r] of puffs) {
+    const g = ctx.createRadialGradient(cx * S, cy * S, 0, cx * S, cy * S, r * S);
+    g.addColorStop(0.0, 'rgba(255,255,255,0.92)');
+    g.addColorStop(0.5, 'rgba(255,255,255,0.55)');
+    g.addColorStop(1.0, 'rgba(255,255,255,0)');
+    ctx.fillStyle = g;
+    ctx.beginPath();
+    ctx.arc(cx * S, cy * S, r * S, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  const tex = new THREE.CanvasTexture(cv);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  return tex;
+}
+
+/**
+ * Spray, bursting up the cliff.
+ *
+ * A coast that never moves is a photograph of a coast. Everything else on this
+ * shoreline is static — the rock, the foam collars, the surf band painted on
+ * the stone — so the only thing that can say the sea is alive is this.
+ *
+ * Each plume has its own period and its own phase, and they are long: eight to
+ * fourteen seconds between bursts. Sets come in slowly, and a shoreline where
+ * every rock erupts every two seconds reads as a fountain display.
+ */
+export function createSpray() {
+  const group = new THREE.Group();
+  group.name = 'spray';
+  if (!OCEAN) return group;
+
+  const rnd = mulberry32(50231);
+  const zNear = TEE.z + 20;
+  const zFar = WORLD_CZ - WORLD_SIZE * 0.34;
+  const spots = [];
+
+  // Right at the foot of the cliff, where the water has something to hit.
+  for (let i = 0; i < 2200 && spots.length < 30; i++) {
+    const z = lerp(zNear, zFar, rnd());
+    const out = lerp(0, 16, rnd());
+    const x = centreXAt(z) + OCEAN.seaward.x * out + lerp(-30, 30, rnd());
+    const zz = z + OCEAN.seaward.z * out;
+    const se = shoreEdge(x, zz);
+    if (se > 2 || se < -18) continue;
+    spots.push({
+      x, z: zz,
+      w: lerp(0.075, 0.135, rnd()),      // one burst every 8-14 seconds
+      ph: rnd() * Math.PI * 2,
+      size: lerp(9, 22, rnd()),
+      rise: lerp(9, 26, rnd()),
+    });
+  }
+  if (!spots.length) return group;
+
+  const tex = sprayTexture();
+  const sprites = spots.map((sp) => {
+    const mat = new THREE.SpriteMaterial({
+      map: tex, transparent: true, depthWrite: false, opacity: 0,
+      color: 0xf2fbff, fog: true,
+    });
+    const s = new THREE.Sprite(mat);
+    s.position.set(sp.x, OCEAN.y, sp.z);
+    group.add(s);
+    return s;
+  });
+
+  let t = 0;
+  group.userData.tick = (dt) => {
+    t += dt;
+    for (let i = 0; i < spots.length; i++) {
+      const sp = spots[i];
+      // The burst is the top of a sine, squared: a long flat trough with a
+      // short peak, which is what a wave against rock actually does.
+      const raw = Math.sin(t * sp.w * Math.PI * 2 + sp.ph);
+      const k = Math.max(0, raw - 0.72) / 0.28;
+      const s = sprites[i];
+      if (k <= 0) { s.visible = false; continue; }
+      s.visible = true;
+      // Up fast, hang, fall away — and fade out as it goes, because spray
+      // thins as it climbs rather than vanishing at a fixed height.
+      const climb = Math.sin(k * Math.PI * 0.9);
+      s.position.y = OCEAN.y + 1 + climb * sp.rise;
+      const grow = sp.size * (0.45 + climb * 0.85);
+      s.scale.set(grow, grow * 1.25, 1);
+      s.material.opacity = 0.85 * Math.sin(k * Math.PI) * (1 - climb * 0.35);
+    }
   };
 
   return group;

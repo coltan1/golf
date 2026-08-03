@@ -13,6 +13,7 @@
  */
 
 import * as THREE from 'three';
+import { timeOfDay } from './scenery.js';
 import { COURSE } from './courses.js';
 import {
   WORLD_SIZE, WORLD_CX, WORLD_CZ, WATER_Y, POND, CREEK, MOW_PERIOD,
@@ -210,7 +211,14 @@ export function createTerrain(renderer, toonRamp, treeMap) {
   // grooves, turf grain and cart-path detail — all drawn per-pixel and
   // antialiased against the pixel footprint so nothing shimmers as it recedes.
   mat.onBeforeCompile = (shader) => {
-    shader.uniforms.uRough  = { value: colorUniform(SURFACE_COLORS.roughMean) };
+    // The colour the shader blends to at a cut line — it has to agree with
+    // whatever the bake put on the other side of that line.
+    // What the shader blends to at a cut line. On the coast it cannot be the
+    // full burnt colour: the bake only reaches that a good twenty yards out,
+    // and a shader that jumps straight to it at the mowing line draws the tan
+    // as a hard band along the fairway.
+    shader.uniforms.uRough  = { value: colorUniform(
+      COURSE.coastal ? SURFACE_COLORS.roughCoastNear : SURFACE_COLORS.roughMean) };
     shader.uniforms.uFairA  = { value: colorUniform(SURFACE_COLORS.fairA) };
     shader.uniforms.uFairB  = { value: colorUniform(SURFACE_COLORS.fairB) };
     shader.uniforms.uCollar = { value: colorUniform(SURFACE_COLORS.collar) };
@@ -547,6 +555,17 @@ export function createTerrain(renderer, toonRamp, treeMap) {
             float rn = ccNoise(vWorld * 0.09) * 0.6 + ccNoise(vWorld * 0.34) * 0.4;
             vec3 rockCol = mix(uRock, uRockB, smoothstep(0.32, 0.78, rn));
 
+            // Columns and strata.
+            //
+            // Noise in XZ is constant up a vertical face — which is exactly
+            // wrong for surf and exactly right for this. Basalt cools into
+            // vertical columns, so the artefact that had to be broken up for
+            // the foam is the effect wanted here, at a finer scale, with
+            // horizontal bedding laid across it.
+            float ccCol = ccNoise(vWorld * 0.75) * 0.6 + ccNoise(vWorld * 2.1) * 0.4;
+            rockCol *= 0.80 + 0.40 * ccCol;
+            rockCol *= 1.0 + 0.09 * sin(vWorldY * 0.85 + ccCol * 3.0);
+
             // Wet rock, then surf.
             //
             // Painted on the land rather than on the water, which is the only
@@ -728,6 +747,11 @@ export function createOcean() {
   // pale against, and the crests are the only thing breaking it up.
   uniforms.uDeep.value = new THREE.Color(0x0b3f66);
   uniforms.uShallow.value = new THREE.Color(0x145f8c);
+  // Where the sun lies, flattened to the ground plane. The glitter path is a
+  // direction test against this and nothing else.
+  const sun = timeOfDay().sun;
+  const sunLen = Math.hypot(sun[0], sun[2]) || 1;
+  uniforms.uSunAz = { value: new THREE.Vector2(sun[0] / sunLen, sun[2] / sunLen) };
 
   const mat = new THREE.MeshBasicMaterial({ transparent: false });
   mat.onBeforeCompile = (shader) => {
@@ -736,9 +760,11 @@ export function createOcean() {
       .replace('#include <common>', `#include <common>
         uniform float uTime;
         varying vec2 vLocal;
-        varying float vField;`)
+        varying float vField;
+        varying vec3 vWPos;`)
       .replace('#include <begin_vertex>', `#include <begin_vertex>
         vLocal = vec2(position.x, position.z);
+        vWPos = (modelMatrix * vec4(position, 1.0)).xyz;
         // The pond's field runs 0 at the middle to 1 at the bank, and the
         // fragment shader reads it as depth. Open water is all middle, so it
         // is pinned at zero — pinning it near one gave the pale shallows
@@ -750,7 +776,44 @@ export function createOcean() {
           0.16 * sin((position.x + position.z) * 0.052 + uTime * 0.61);`);
     shader.fragmentShader = waterFragment(shader.fragmentShader)
       // The pond discards outside its ellipse. There is no outside here.
-      .replace('if (vField > 1.0) discard;', '');
+      .replace('if (vField > 1.0) discard;', '')
+      .replace('#include <common>', `#include <common>
+        uniform vec2 uSunAz;
+        varying vec3 vWPos;`)
+      .replace('#include <opaque_fragment>', `
+        // --- sun glitter ------------------------------------------------
+        //
+        // The single thing that most separates open sea from a blue floor.
+        // Sparkle is everywhere on real water but you only see it where the
+        // sun's reflection could reach your eye, which on a flat surface is a
+        // path running from your feet to the horizon under the sun.
+        //
+        // So the mask is not a lighting calculation, it is a direction test:
+        // how closely the line from the camera to this patch of water lines up
+        // with the way the sun lies. That gives the path for free, in the right
+        // place, from any camera angle, with no normals involved.
+        vec2 ccAway = vWPos.xz - cameraPosition.xz;
+        float ccLen = length(ccAway);
+        if (ccLen > 1.0) {
+          float ccAlign = dot(ccAway / ccLen, uSunAz);
+          // Wide near the horizon and pinched close in — the same shape the
+          // reflection of anything makes on water.
+          float ccPath = smoothstep(0.86, 0.995, ccAlign)
+                       * smoothstep(60.0, 400.0, ccLen);
+          if (ccPath > 0.002) {
+            // Two scales of speckle, one drifting against the other, so the
+            // glitter shimmers rather than sitting still.
+            float ccG = cwNoise(vWPos.xz * 0.55 + vec2(uTime * 0.5, -uTime * 0.3))
+                      * cwNoise(vWPos.xz * 1.70 - vec2(uTime * 0.9, uTime * 0.6));
+            float ccSpark = smoothstep(0.30, 0.62, ccG) * ccPath;
+            gl_FragColor.rgb = mix(gl_FragColor.rgb, vec3(1.0, 0.97, 0.86),
+                                   min(0.92, ccSpark * 1.5));
+            // And a broad warm wash under it, so the path reads even where no
+            // individual speck has landed.
+            gl_FragColor.rgb += vec3(0.16, 0.13, 0.08) * ccPath;
+          }
+        }
+        #include <opaque_fragment>`);
   };
 
   const mesh = new THREE.Mesh(geo, mat);
