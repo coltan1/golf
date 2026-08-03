@@ -32,6 +32,12 @@ import { Hud, scoreName } from './hud.js';
 import { createKitControls } from './kit.js';
 import { createMenu } from './menu.js';
 import { createAdminMenu } from './admin.js';
+import { installWoodVars } from './woodtex.js';
+
+// Drawn before anything asks for them. The loading screen is the first thing
+// anyone sees and it is made of the same wood as the rest, so the textures
+// have to exist by the time it paints rather than a frame later.
+installWoodVars();
 import { Match } from './match.js';
 import { COURSES, COURSE, HOLES, TOTAL_PAR, setCourse } from './courses.js';
 
@@ -782,11 +788,12 @@ function setupMatch() {
     /* Under the menu (60) and under the loader (50): this is a pause screen,
        and both of those replace the game outright. */
     #opts{position:fixed;inset:0;z-index:45;display:none;place-items:center;
-      background:rgba(24,16,8,.52);backdrop-filter:blur(5px);
+      background:rgba(24,16,8,.58);backdrop-filter:blur(5px);
       -webkit-backdrop-filter:blur(5px)}
     #opts.open{display:grid}
     #optsCard{width:min(330px,calc(100vw - 40px));padding:22px;border-radius:22px;
-      background:linear-gradient(180deg,#fbf1d9,#ecd9b0);
+      background:var(--wood-board) repeat 50% 50% / 320px 160px,
+        linear-gradient(180deg,#fbf1d9,#ecd9b0);
       border:5px solid var(--wood);text-align:center;color:var(--ink);
       box-shadow:0 0 0 3px var(--ink),0 18px 44px rgba(0,0,0,.55),
                  inset 0 3px 0 rgba(255,255,255,.6)}

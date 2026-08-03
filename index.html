@@ -228,9 +228,13 @@ body{ color:var(--ink); }
   letter-spacing:.3px;
 }
 
-/* ---------- the cream board, used everywhere a panel is needed ---------- */
+/* ---------- the cream board, used everywhere a panel is needed ----------
+   Grain in it now, not just the colour of it. The variables are published by
+   woodtex.js when the lobby is built; the gradient underneath is the fallback
+   for the moment before that happens and for anything that draws early. */
 .pill{
-  background:linear-gradient(180deg,var(--board) 0%,var(--board-2) 100%);
+  background:var(--wood-board) repeat 50% 50% / 260px 130px,
+    linear-gradient(180deg,var(--board) 0%,var(--board-2) 100%);
   border:3px solid var(--ink);
   border-radius:14px;
   box-shadow:0 4px 0 rgba(61,39,22,.45), 0 8px 18px rgba(0,0,0,.34),
@@ -268,13 +272,16 @@ body{ color:var(--ink); }
 .sbRow .sbScore{font-weight:900}
 
 /* ---------- the hint and the shot report ---------- */
-#hint,#shot{ background:linear-gradient(180deg,#4a3220,#33210f); color:#f6e6c8;
+#hint,#shot{
+  background:var(--wood-wall) repeat 50% 50% / 300px 520px,
+    linear-gradient(180deg,#4a3220,#33210f); color:#f6e6c8;
   border-color:#20140a; box-shadow:0 4px 0 rgba(0,0,0,.4),0 8px 18px rgba(0,0,0,.35);
   text-shadow:0 1px 0 rgba(0,0,0,.6); }
 
 /* ---------- the scorecard ---------- */
 #card{
-  background:linear-gradient(180deg,var(--board),var(--board-2));
+  background:var(--wood-board) repeat 50% 50% / 380px 190px,
+    linear-gradient(180deg,var(--board),var(--board-2));
   border:5px solid var(--wood);
   border-radius:22px;
   box-shadow:0 0 0 3px var(--ink), 0 14px 34px rgba(0,0,0,.5),
@@ -294,7 +301,13 @@ body{ color:var(--ink); }
   box-shadow:0 1px 0 var(--green-lip), 0 3px 8px rgba(0,0,0,.3); }
 
 /* ---------- loader ---------- */
-#loader{ background:radial-gradient(120% 90% at 50% 20%,#4d3a22 0%,#2a1d10 70%,#180f07 100%); }
+#loader{
+  background:
+    radial-gradient(120% 90% at 50% 18%, rgba(255,206,124,.22) 0%, rgba(0,0,0,0) 62%),
+    radial-gradient(110% 80% at 50% 108%, rgba(0,0,0,.6) 0%, rgba(0,0,0,0) 70%),
+    var(--wood-wall) repeat 50% 0 / 520px 900px,
+    linear-gradient(180deg,#3d2a15,#1c1208);
+}
 #loaderTitle{ color:var(--board); text-transform:uppercase; letter-spacing:1px;
   text-shadow:0 3px 0 rgba(0,0,0,.5); }
 #loaderSub{ color:#c9ab80; }

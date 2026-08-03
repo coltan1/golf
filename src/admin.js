@@ -17,14 +17,15 @@ const OPEN_SEQ = 'admin';
 const css = `
 #admin{
   position:fixed;inset:0;z-index:80;display:none;place-items:center;
-  background:rgba(20,14,7,.55);
+  background:rgba(20,14,7,.62);
   backdrop-filter:blur(5px);-webkit-backdrop-filter:blur(5px);
 }
 #admin.open{display:grid}
 #adminCard{
   width:min(560px,calc(100vw - 36px));max-height:calc(100vh - 60px);overflow-y:auto;
   padding:20px 22px 22px;border-radius:22px;text-align:left;color:var(--ink);
-  background:linear-gradient(180deg,#fbf1d9,#ecd9b0);
+  background:var(--wood-board) repeat 50% 50% / 380px 190px,
+    linear-gradient(180deg,#fbf1d9,#ecd9b0);
   border:5px solid var(--wood);
   box-shadow:0 0 0 3px var(--ink),0 20px 50px rgba(0,0,0,.6),
              inset 0 3px 0 rgba(255,255,255,.6);
@@ -52,7 +53,8 @@ const css = `
 .adminHole{
   font:inherit;font-size:14px;font-weight:900;padding:11px 4px;border-radius:11px;
   cursor:pointer;color:var(--ink);border:3px solid var(--ink);
-  background:linear-gradient(180deg,#fdf6e6,#ecd9b0);
+  background:var(--wood-board) repeat 50% 50% / 200px 100px,
+    linear-gradient(180deg,#fdf6e6,#ecd9b0);
   box-shadow:0 4px 0 rgba(61,39,22,.45),inset 0 2px 0 rgba(255,255,255,.6);
 }
 .adminHole:active{transform:translateY(3px);box-shadow:0 1px 0 rgba(61,39,22,.45)}
@@ -68,7 +70,8 @@ const css = `
   font:inherit;font-size:12.5px;font-weight:900;padding:9px 16px;border-radius:11px;
   cursor:pointer;text-transform:uppercase;letter-spacing:.4px;color:var(--ink);
   border:3px solid var(--ink);
-  background:linear-gradient(180deg,#fdf6e6,#ecd9b0);
+  background:var(--wood-board) repeat 50% 50% / 200px 100px,
+    linear-gradient(180deg,#fdf6e6,#ecd9b0);
   box-shadow:0 4px 0 rgba(61,39,22,.45),inset 0 2px 0 rgba(255,255,255,.6);
 }
 .adminChip:active{transform:translateY(3px);box-shadow:0 1px 0 rgba(61,39,22,.45)}

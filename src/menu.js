@@ -24,6 +24,7 @@ import { Golfer } from './golfer.js';
 import { makeToonRamp } from './terrain.js';
 import { COURSES } from './courses.js';
 import { TIMES } from './scenery.js';
+import { installWoodVars } from './woodtex.js';
 
 /**
  * Bump this when something ships.
@@ -47,13 +48,15 @@ const css = `
    ------------------------------------------------------------------------- */
 #menu{
   position:fixed;inset:0;z-index:60;overflow:hidden;
-  /* Layered rather than an image: a warm pool of light at the top, deep
-     shade at the corners, and a slow vertical grain over the whole thing. */
+  /* A wall of real planks, drawn at load. The gradients on top are the light
+     in the room rather than the surface: a warm pool where the lamp is and
+     deep shade in the corners, so the same wood is not the same brown
+     everywhere. Without them the wall is a repeating texture and looks it. */
   background:
-    radial-gradient(120% 80% at 50% -10%, rgba(255,214,140,.30) 0%, rgba(0,0,0,0) 60%),
-    radial-gradient(90% 70% at 50% 110%, rgba(0,0,0,.55) 0%, rgba(0,0,0,0) 70%),
-    repeating-linear-gradient(97deg, rgba(0,0,0,.10) 0 3px, rgba(255,255,255,.02) 3px 9px),
-    linear-gradient(175deg,#4a3a1e 0%,#33451f 42%,#22301a 100%);
+    radial-gradient(120% 80% at 50% -12%, rgba(255,206,124,.34) 0%, rgba(0,0,0,0) 58%),
+    radial-gradient(100% 78% at 50% 112%, rgba(0,0,0,.62) 0%, rgba(0,0,0,0) 70%),
+    var(--wood-wall) repeat 50% 0 / 520px 900px,
+    linear-gradient(175deg,#3d2a15,#241708);
   transition:opacity .4s ease;
   font-variant-numeric:tabular-nums;
   color:var(--ink);
@@ -113,7 +116,8 @@ const css = `
 /* The board the golfer stands on: cream, framed in wood, outlined in ink. */
 #homeStage{
   width:min(300px,72vw);height:min(320px,40vh);border-radius:20px;overflow:hidden;
-  background:linear-gradient(180deg,#fbf1d9,#ecd9b0);
+  background:var(--wood-board) repeat 50% 50% / 340px 170px,
+    linear-gradient(180deg,#fbf1d9,#ecd9b0);
   border:5px solid var(--wood);
   box-shadow:0 0 0 3px var(--ink),0 14px 34px rgba(0,0,0,.55),
              inset 0 3px 0 rgba(255,255,255,.6);
@@ -123,7 +127,8 @@ const css = `
   width:min(300px,72vw);margin-top:16px;text-align:center;font:inherit;font-size:15px;
   font-weight:900;padding:11px 12px;border-radius:13px;color:var(--ink);
   border:3px solid var(--ink);
-  background:linear-gradient(180deg,#fbf1d9,#ecd9b0);
+  background:var(--wood-board) repeat 50% 50% / 240px 120px,
+    linear-gradient(180deg,#fbf1d9,#ecd9b0);
   box-shadow:0 4px 0 rgba(61,39,22,.5),inset 0 2px 0 rgba(255,255,255,.6);
 }
 #homeName:focus{outline:none;border-color:var(--green-d)}
@@ -136,20 +141,40 @@ const css = `
 #custStage{
   flex:0 0 340px;border-radius:20px;overflow:hidden;align-self:flex-start;
   height:min(560px,calc(100vh - 150px));min-height:320px;
-  background:linear-gradient(180deg,#fbf1d9,#ecd9b0);
+  background:var(--wood-board) repeat 50% 50% / 340px 170px,
+    linear-gradient(180deg,#fbf1d9,#ecd9b0);
   border:5px solid var(--wood);
   box-shadow:0 0 0 3px var(--ink),0 14px 34px rgba(0,0,0,.55),
              inset 0 3px 0 rgba(255,255,255,.6);
 }
 #custOpts{
   flex:1;min-width:0;overflow-y:auto;padding:20px 22px;border-radius:20px;
-  background:linear-gradient(180deg,#fbf1d9,#f0dcb6);
+  background:var(--wood-board) repeat 50% 0 / 420px 210px,
+    linear-gradient(180deg,#fbf1d9,#f0dcb6);
   border:5px solid var(--wood);
   box-shadow:0 0 0 3px var(--ink),0 14px 34px rgba(0,0,0,.5),
              inset 0 3px 0 rgba(255,255,255,.55);
 }
 #previewWrap{width:100%;height:100%}
 #previewWrap canvas{width:100%;height:100%;display:block}
+
+/* Nail heads, one in each corner of the big boards. A board that is not
+   fixed to anything is a floating rectangle however good its grain is —
+   these are what put it on the wall. Drawn with gradients rather than an
+   image: a nail is a lit dome and a shadow, and that is two radials. */
+.nailed{position:relative}
+.nailed::before,.nailed::after,
+.nailed > .nail::before,.nailed > .nail::after{
+  content:'';position:absolute;width:13px;height:13px;border-radius:50%;
+  z-index:3;pointer-events:none;
+  background:
+    radial-gradient(circle at 34% 30%, #fdf6e4 0%, #c9bda6 42%, #8a7c62 74%, #5d5039 100%);
+  box-shadow:0 1px 2px rgba(0,0,0,.55), inset 0 -1px 1px rgba(0,0,0,.35);
+}
+.nailed::before{left:9px;top:9px}
+.nailed::after{right:9px;top:9px}
+.nailed > .nail::before{left:9px;bottom:9px}
+.nailed > .nail::after{right:9px;bottom:9px}
 
 /* ---------- shared bits ---------- */
 .mLabel{
@@ -160,7 +185,8 @@ const css = `
 .cards{display:flex;gap:12px;flex-wrap:wrap}
 .card{
   flex:1 1 260px;text-align:left;padding:14px 16px;border-radius:16px;cursor:pointer;
-  background:linear-gradient(180deg,#fbf1d9,#eddcb6);
+  background:var(--wood-board) repeat 50% 50% / 300px 150px,
+    linear-gradient(180deg,#fbf1d9,#eddcb6);
   border:3px solid var(--ink);color:var(--ink);
   box-shadow:0 5px 0 rgba(61,39,22,.45),0 8px 16px rgba(0,0,0,.32),
              inset 0 2px 0 rgba(255,255,255,.6);
@@ -181,7 +207,8 @@ const css = `
 .chip{
   font-size:13px;font-weight:900;padding:10px 20px;border-radius:12px;cursor:pointer;
   text-transform:uppercase;letter-spacing:.4px;color:var(--ink);
-  background:linear-gradient(180deg,#fbf1d9,#eddcb6);
+  background:var(--wood-board) repeat 50% 50% / 220px 110px,
+    linear-gradient(180deg,#fbf1d9,#eddcb6);
   border:3px solid var(--ink);
   box-shadow:0 4px 0 rgba(61,39,22,.45),inset 0 2px 0 rgba(255,255,255,.6);
 }
@@ -230,7 +257,8 @@ const css = `
 .lobby{
   display:flex;align-items:center;justify-content:space-between;gap:12px;
   padding:12px 15px;border-radius:14px;color:var(--ink);
-  background:linear-gradient(180deg,#fbf1d9,#eddcb6);
+  background:var(--wood-board) repeat 50% 50% / 300px 150px,
+    linear-gradient(180deg,#fbf1d9,#eddcb6);
   border:3px solid var(--ink);
   box-shadow:0 4px 0 rgba(61,39,22,.45),inset 0 2px 0 rgba(255,255,255,.6);
 }
@@ -265,6 +293,9 @@ const css = `
 `;
 
 export function createMenu({ getLook, getName, buildKit, onStart, onHost, onQuick, onJoin, onBrowse }) {
+  // Before the stylesheet, because the stylesheet asks for them by name.
+  installWoodVars();
+
   const style = document.createElement('style');
   style.textContent = css;
   document.head.appendChild(style);
@@ -275,7 +306,7 @@ export function createMenu({ getLook, getName, buildKit, onStart, onHost, onQuic
     <div class="screen on" id="home">
       <h1 id="homeTitle">Sunny Links</h1>
       <div id="homeSub">Arcade golf, one hole at a time.</div>
-      <div id="homeStage"></div>
+      <div id="homeStage" class="nailed"><i class="nail"></i></div>
       <input id="homeName" maxlength="18" placeholder="Your name">
       <div id="homeBtns">
         <button class="bigBtn" data-go="solo">Solo</button>
@@ -291,8 +322,8 @@ export function createMenu({ getLook, getName, buildKit, onStart, onHost, onQuic
           <div class="sSub">Changes save, and your opponent sees them.</div></div>
       </div>
       <div id="custBody">
-        <div id="custStage"></div>
-        <div id="custOpts"></div>
+        <div id="custStage" class="nailed"><i class="nail"></i></div>
+        <div id="custOpts" class="nailed"><i class="nail"></i></div>
       </div>
     </div>
 

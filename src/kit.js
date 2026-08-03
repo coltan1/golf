@@ -60,7 +60,8 @@ function styleTag() {
   .kitChip{
     font-size:12px; font-weight:900; padding:8px 14px; border-radius:11px; cursor:pointer;
     text-transform:uppercase; letter-spacing:.4px; color:var(--ink);
-    background:linear-gradient(180deg,#fdf6e6,#ecd9b0);
+    background:var(--wood-board) repeat 50% 50% / 200px 100px,
+      linear-gradient(180deg,#fdf6e6,#ecd9b0);
     border:3px solid var(--ink);
     box-shadow:0 3px 0 rgba(61,39,22,.45), inset 0 2px 0 rgba(255,255,255,.6);
   }
@@ -70,7 +71,12 @@ function styleTag() {
     text-shadow:0 2px 0 rgba(0,0,0,.28);
     box-shadow:0 3px 0 var(--orange-lip), inset 0 2px 0 rgba(255,255,255,.45);
   }
-  .kitSplit{border:0; border-top:3px dashed rgba(61,39,22,.28); margin:18px 0}
+  /* A groove cut in the board rather than a drawn line: a dark score with a
+     lit edge under it, which is what a chisel leaves. */
+  .kitSplit{
+    border:0; height:3px; margin:18px 0; border-radius:2px;
+    background:linear-gradient(180deg, rgba(61,39,22,.42) 0 2px, rgba(255,255,255,.55) 2px 3px);
+  }
   `;
   document.head.appendChild(el);
 }
