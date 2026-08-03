@@ -25,6 +25,7 @@ import { Ball, CLUBS, pickClub } from './ball.js';
 import { SwipeSwing } from './input.js';
 import { CameraRig } from './camerarig.js';
 import { AimLine } from './aimline.js';
+import { Cart, createCartControls, HIT_RADIUS } from './cart.js';
 import { createSunRays, createButterflies, createSeagulls, createMotes, createSpray } from './ambience.js';
 import { FreeCam } from './freecam.js';
 import { Audio } from './audio.js';
@@ -71,6 +72,7 @@ const hud = new Hud();
 const audio = new Audio();
 
 // ---------------------------------------------------------------- world
+let cart, cartCtl, driveT = 0;
 let terrain, water, ocean, spray, creek, clouds, flag, clubhouse, golfer, ball, rig, aimLine, input, lights, freeCam;
 let sunRays, fliers, motes;
 let match = null;
@@ -183,6 +185,10 @@ function buildWorld() {
   golfer = new Golfer(ramp, playerLook);
   add(golfer.root);
 
+  // The cart lives in the world group, so a hole change throws it away with
+  // everything else and the next hole gets a clean one at the tee.
+  cart = new Cart(worldGroup, { colour: 0xf4f6f8, ramp });
+
   ball = new Ball(worldGroup, ramp);
   aimLine = new AimLine(worldGroup);
 }
@@ -195,6 +201,7 @@ function buildWorld() {
 function initOnce() {
   rig = new CameraRig(camera);
   input = new SwipeSwing(renderer.domElement);
+  cartCtl = createCartControls();
   freeCam = new FreeCam(camera, renderer.domElement);
   wireInput();
 }
@@ -326,6 +333,7 @@ function loadHole(index) {
 }
 
 function beginHole() {
+  cartCtl?.setActive(false);
   game.strokes = 0;
   game.onTee = true;
   game.state = 'intro';
@@ -373,6 +381,51 @@ function launchShot(power) {
   const label = game.pending.tempo > 0.62 ? 'Pure strike' : power > 0.9 ? 'Big one' : null;
   if (label) hud.shot(label, 1.6);
   hud.setStatus(game.strokes, game.club.name, distToHole(ball.pos.x, ball.pos.z));
+}
+
+/**
+ * Get in the cart and go.
+ *
+ * The cart starts where the golfer was standing rather than beside the ball,
+ * because that is where you left it — the whole point of the mechanic is that
+ * the distance between two shots is a real distance, and starting at the
+ * destination would give the game away.
+ */
+function beginDrive() {
+  game.state = 'driving';
+  driveT = 0;
+  golfer.visible = false;
+  aimLine.setVisible(false);
+  hud.showPower(false);
+
+  const from = game.shotFrom;
+  // Pointed at the ball, so the first thing you see is where you are going.
+  const face = Math.atan2(ball.pos.x - from.x, -(ball.pos.z - from.z));
+  cart.place(from.x, from.z, face);
+  cart.visible = true;
+
+  rig.setMode('drive');
+  cartCtl.setActive(true);
+  hud.hint('Drive to your ball', 0);
+}
+
+/** Park, get out, and play. */
+function arriveAtBall() {
+  cartCtl.setActive(false);
+  cart.speed = 0;
+  match?.reportCart(cart);
+  // Left where it was parked. It is the marker for where the last shot was
+  // played from and it is the thing the other player is aiming at.
+  refreshShot({ pop: true });
+  game.state = 'ready';
+  rig.setMode('address');
+  const toPin = distToHole(ball.pos.x, ball.pos.z);
+  audio.step(game.lie === 'green' ? 1 : game.lie === 'fairway' ? 0.7 : 0.25);
+  setTimeout(() => audio.step(game.lie === 'green' ? 1 : 0.6), 260);
+  if (game.onTee) setTimeout(() => audio.tee(), 620);
+  if (game.club === CLUBS.putter) hud.hint(`${Math.round(toPin * 3)} feet to the cup`, 3);
+  else if (game.lie === 'sand') hud.hint('In the sand — swing a little harder', 3);
+  else hud.hint('', 0);
 }
 
 function onBallRest() {
@@ -603,6 +656,7 @@ function camCtx() {
     aim: watch ? Math.atan2(HOLE_POS.x - p.x, -(HOLE_POS.z - p.z)) : game.aim,
     charge: watch ? 0 : golfer.charge,
     shotDir: !watch && game.state === 'watching' ? game.shotDir : null,
+    cart,
     ballHeight: Math.max(0, p.y - gy),
     travelled: watch ? 0 : Math.hypot(ball.pos.x - game.shotFrom.x, ball.pos.z - game.shotFrom.z),
     holePos: HOLE_POS,
@@ -692,17 +746,34 @@ function frame() {
 
   if (game.state === 'settling') {
     game.settleTimer += dt;
-    if (game.settleTimer > 1.5) {
-      refreshShot({ pop: true });
-      game.state = 'ready';
-      rig.setMode('address');
-      const toPin = distToHole(ball.pos.x, ball.pos.z);
-      audio.step(game.lie === 'green' ? 1 : game.lie === 'fairway' ? 0.7 : 0.25);
-      setTimeout(() => audio.step(game.lie === 'green' ? 1 : 0.6), 260);
-      if (game.onTee) setTimeout(() => audio.tee(), 620);
-      if (game.club === CLUBS.putter) hud.hint(`${Math.round(toPin * 3)} feet to the cup`, 3);
-      else if (game.lie === 'sand') hud.hint('In the sand — swing a little harder', 3);
+    if (game.settleTimer > 1.2) beginDrive();
+  }
+
+  // --- the drive ---
+  //
+  // Stepped before the arrival test, so a cart that reaches the ball this
+  // frame is already parked when the test runs and does not glide the last
+  // yard after the game has decided you are there.
+  if (game.state === 'driving') {
+    driveT += dt;
+    cart.update(dt, cartCtl.read());
+    if (match?.active && match.oppCart) {
+      const hit = cart.collide(match.oppCart);
+      if (hit > 2.2 && time - (game.lastRam ?? -9) > 0.6) {
+        game.lastRam = time;
+        audio.bounce(clamp(hit / 9, 0.25, 1));
+        hud.shot('Contact!', 1.4);
+      }
     }
+    match?.reportCart(cart);
+
+    const d = Math.hypot(cart.pos.x - ball.pos.x, cart.pos.z - ball.pos.z);
+    // Near enough, slow enough. Requiring a full stop made every arrival end
+    // in a fiddle; requiring only proximity meant you flew past at speed and
+    // the shot began facing backwards.
+    if (d < 4.2 && Math.abs(cart.speed) < 2.6) arriveAtBall();
+    // And a way out for anyone who does not want to drive today.
+    else if (driveT > 90) arriveAtBall();
   }
 
   // Freecam owns the pointer while it's flying, so the swing must stand down —
@@ -711,6 +782,9 @@ function frame() {
   // while the camera is somewhere else entirely, is worse than nothing.
   input.enabled = !freeCam.active && !spectating
     && (game.state === 'ready' || game.state === 'charging');
+  // The pad only exists while driving, and never while the freecam has the
+  // pointer or the menu is up over the top of it.
+  if (game.state !== 'driving' && cartCtl) cartCtl.setActive(false);
   if (spectating !== wasSpectating) {
     wasSpectating = spectating;
     aimLine.setVisible(!spectating && game.state === 'ready');
@@ -725,6 +799,8 @@ function frame() {
   let focusX, focusZ;
   if (freeCam.active) {
     focusX = freeCam.pos.x; focusZ = freeCam.pos.z;
+  } else if (game.state === 'driving') {
+    focusX = cart.pos.x; focusZ = cart.pos.z;
   } else if (match?.spectating) {
     focusX = match.watchPos.x; focusZ = match.watchPos.z;
   } else if (game.state === 'watching') {
@@ -951,7 +1027,7 @@ window.freecam = Object.assign(
     },
 
     /** Live handles on the render objects, for automated shading audits. */
-    dbg: () => ({ renderer, scene, camera, lights, terrain, game, golfer, input, rig, hud, match, THREE }),
+    dbg: () => ({ renderer, scene, camera, lights, terrain, game, golfer, ball, cart, input, rig, hud, match, THREE }),
 
     /** Jump straight to a hole by number (1-18), skipping the scorecard. */
     hole: (n) => {

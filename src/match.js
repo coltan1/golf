@@ -25,6 +25,7 @@
 import * as THREE from 'three';
 import { Net } from './net.js';
 import { Golfer } from './golfer.js';
+import { Cart } from './cart.js';
 import { makeToonRamp } from './terrain.js';
 import { heightAt, HOLE_POS } from './course.js';
 
@@ -65,6 +66,11 @@ export class Match {
     // hole does not throw them away.
     this._ramp = null;
     this._opp = null;
+    // Their cart. Built on the first `cart` message rather than on matching,
+    // because until somebody drives there is nothing to show and a parked
+    // cart in the middle of the fairway would be a lie.
+    this.oppCart = null;
+    this._cartSent = 0;
     this._oppTo = new THREE.Vector3();
     this._oppHas = false;
     this._time = 0;
@@ -174,6 +180,35 @@ export class Match {
     if (!this.oppDone) this._setTurn(1 - this.net.side);
   }
 
+  /**
+   * Where our cart is, ten times a second.
+   *
+   * Rate-limited here rather than by the caller, because the caller is a frame
+   * loop and would send sixty a second without noticing. Ten is enough: the
+   * ghost interpolates between them, and a cart is a slow thing that does not
+   * change direction faster than that.
+   *
+   * Position, heading and speed only. No inputs, no acknowledgement, nothing
+   * to reconcile — if a packet goes missing the ghost simply keeps gliding to
+   * the last place it knew about, and the next one puts it right.
+   */
+  reportCart(cart) {
+    if (!this.active) return;
+    const now = performance.now();
+    if (now - this._cartSent < 100) return;
+    this._cartSent = now;
+    this.net.send({
+      t: 'cart',
+      x: +cart.pos.x.toFixed(2), z: +cart.pos.z.toFixed(2),
+      h: +cart.heading.toFixed(3), v: +cart.speed.toFixed(2),
+    });
+  }
+
+  /** Their cart is parked and they are playing a shot — put it away. */
+  hideCart() {
+    if (this.oppCart) this.oppCart.visible = false;
+  }
+
   /** We have struck the ball — let them watch us do it. */
   reportSwing(hole, power) {
     if (!this.active) return;
@@ -226,6 +261,21 @@ export class Match {
     // — it usually arrives while both players are still on hole 1, but a late
     // joiner or a reconnect should not lose it.
     if (m.t === 'look') { this._buildOpponent(m.look); return; }
+    if (m.t === 'cart') {
+      this._ramp ??= makeToonRamp();
+      this.oppCart ??= new Cart(this.scene, {
+        // Their cart is the other colour, and it has to be obvious at forty
+        // yards which one is coming at you.
+        colour: 0xe8734a, ramp: this._ramp, ghost: true,
+      });
+      this.oppCart.target = { x: m.x, z: m.z, h: m.h, v: m.v ?? 0 };
+      if (!this.oppCart.visible) {
+        this.oppCart.place(m.x, m.z, m.h);
+        this.oppCart.visible = true;
+      }
+      return;
+    }
+    if (m.t === 'parked') { this.hideCart(); return; }
     if (m.h !== this.hole) return;
     if (m.t === 'swing') { this._playOpponentSwing(m.p ?? 0.6); return; }
     if (m.t === 'ball') {
@@ -328,6 +378,7 @@ export class Match {
   _hideGhost() {
     if (this._ghost) this._ghost.visible = false;
     if (this._opp) this._opp.visible = false;
+    if (this.oppCart) this.oppCart.visible = false;
     this._oppHas = false;
   }
 
@@ -337,6 +388,7 @@ export class Match {
     // The opponent animates whether or not their ball is on screen — they are
     // still standing there between shots, breathing and settling.
     if (this._opp && this._opp.visible) this._opp.update(dt, this._time);
+    if (this.oppCart && this.oppCart.visible) this.oppCart.update(dt, null);
     const g = this._ghost;
     if (!g || !g.visible) return;
     g.position.lerp(this._ghostTo, Math.min(1, dt * 4));

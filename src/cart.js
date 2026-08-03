@@ -1,0 +1,431 @@
+/**
+ * cart.js — the buggy you drive between shots.
+ *
+ * The ball used to arrive by teleport: it came to rest, the screen waited a
+ * second and a half, and the golfer was suddenly standing over it. That is a
+ * loading screen with no loading in it. Now the distance is yours to cover.
+ *
+ * THE PHYSICS IS ARCADE AND UNASHAMED. A cart has a position, a heading and a
+ * scalar speed; steering turns the heading and the whole thing moves where its
+ * nose points. There is no slip angle, no tyre model, no suspension. Three
+ * things are simulated because they are the three the player can feel:
+ *
+ *   grip changes with the ground, so the fairway is quick and the rough is a
+ *     slog and it is worth staying on the short grass;
+ *   the hill you are on pulls you, so a slope is a real decision;
+ *   and hitting something hurts, because that is the point of the other cart.
+ *
+ * Everything else — the lean into a turn, the squat under braking, the wheels
+ * spinning up — is drawn rather than solved. It is cosmetic, so it belongs in
+ * the render and not in the integrator.
+ */
+
+import * as THREE from 'three';
+import { heightAt, gradientAt, surfaceAt, isOutOfBounds, waterLevelAt } from './course.js';
+import { clamp, lerp } from './util.js';
+
+// ---------------------------------------------------------------- handling
+// Yards and seconds. A real cart does about 14 mph, which is 6.8 yards a
+// second — quick enough that a two-hundred-yard walk is half a minute, slow
+// enough that you can place it beside a ball without fighting it.
+const TOP_SPEED = 13.5;
+const REVERSE_SPEED = 5.0;
+const ACCEL = 11.0;
+const BRAKE = 20.0;
+const DRAG = 0.9;
+// Turn rate falls away with speed. A cart that turns as hard at full pelt as
+// it does at walking pace feels like it is on ice, and one that cannot turn
+// when stopped cannot be parked.
+const TURN_SLOW = 2.5;
+const TURN_FAST = 1.25;
+
+// How much of the top speed each surface allows.
+const GRIP = {
+  fairway: 1.0, green: 0.92, rough: 0.72, deep: 0.5, sand: 0.42, water: 0.28,
+};
+
+const WHEEL_R = 0.30;
+const BODY = { len: 2.5, wide: 1.35 };
+/** Two carts closer than this are touching. */
+export const HIT_RADIUS = 1.55;
+
+// ---------------------------------------------------------------- geometry
+function box(w, h, d, x, y, z, mat, name, rot) {
+  const g = new THREE.BoxGeometry(w, h, d);
+  if (rot) g.rotateX(rot[0] || 0), g.rotateY(rot[1] || 0), g.rotateZ(rot[2] || 0);
+  g.translate(x, y, z);
+  const m = new THREE.Mesh(g, mat);
+  m.name = name;
+  m.castShadow = true;
+  return m;
+}
+
+/**
+ * The cart, in about four hundred triangles.
+ *
+ * Built to be read at forty yards from behind, which is where it spends its
+ * life: a canopy, a bench and four wheels. The canopy is the important part —
+ * it is the only bit whose silhouette is unlike anything else on a golf
+ * course, and it is what tells you at a glance which cart is which when
+ * somebody is bearing down on you.
+ */
+export function buildCartMesh(bodyColour = 0xf2f4f6, ramp = null) {
+  const root = new THREE.Group();
+  root.name = 'cart';
+
+  const toon = (c) => (ramp
+    ? new THREE.MeshToonMaterial({ color: c, gradientMap: ramp })
+    : new THREE.MeshLambertMaterial({ color: c }));
+
+  const shell = toon(bodyColour);
+  const dark = toon(0x2a2f34);
+  const seat = toon(0x3c4650);
+  const trim = toon(0xc8ced4);
+
+  // The whole vehicle hangs off a group turned to face -Z.
+  //
+  // The game's heading of zero points down -Z — that is the direction of play
+  // and every other thing in the world agrees about it — while a cart is far
+  // easier to author nose-forward along +Z. Turning the assembly once here is
+  // the alternative to negating a z in forty places and missing one.
+  const face = new THREE.Group();
+  face.name = 'facing';
+  face.rotation.y = Math.PI;
+  root.add(face);
+
+  const hull = new THREE.Group();
+  hull.name = 'hull';
+  face.add(hull);
+
+  // Floor pan and nose
+  hull.add(box(BODY.wide, 0.22, BODY.len, 0, 0.44, 0, shell, 'pan'));
+  hull.add(box(BODY.wide * 0.92, 0.30, 0.72, 0, 0.62, 0.92, shell, 'nose'));
+  hull.add(box(BODY.wide * 0.86, 0.10, 0.44, 0, 0.80, 1.02, trim, 'dash'));
+
+  // Bench: base, back and a headrest lip
+  hull.add(box(BODY.wide * 0.94, 0.20, 0.70, 0, 0.68, -0.10, seat, 'seatBase'));
+  hull.add(box(BODY.wide * 0.94, 0.62, 0.18, 0, 1.06, -0.44, seat, 'seatBack'));
+
+  // Bag well behind the seat
+  hull.add(box(BODY.wide * 0.80, 0.36, 0.46, 0, 0.72, -0.95, shell, 'well'));
+
+  // Four posts and the canopy
+  for (const sx of [-1, 1]) {
+    for (const sz of [1, -1]) {
+      hull.add(box(0.09, 1.10, 0.09,
+        sx * BODY.wide * 0.42, 1.34, sz * 0.86, dark, 'post'));
+    }
+  }
+  hull.add(box(BODY.wide * 1.06, 0.11, BODY.len * 0.86, 0, 1.94, -0.02, shell, 'canopy'));
+  hull.add(box(BODY.wide * 1.06, 0.05, 0.16, 0, 1.90, 1.02, trim, 'canopyLip'));
+
+  // Steering column and wheel
+  hull.add(box(0.07, 0.46, 0.07, -0.34, 0.98, 0.74, dark, 'column', [0.5, 0, 0]));
+  const w = new THREE.Mesh(new THREE.TorusGeometry(0.19, 0.035, 6, 14), dark);
+  w.rotation.set(Math.PI * 0.42, 0, 0);
+  w.position.set(-0.34, 1.16, 0.60);
+  w.name = 'wheel';
+  hull.add(w);
+
+  // Wheels. Named so the renderer can spin and steer them.
+  const wheels = [];
+  const tyre = new THREE.CylinderGeometry(WHEEL_R, WHEEL_R, 0.22, 10);
+  tyre.rotateZ(Math.PI / 2);
+  for (const sx of [-1, 1]) {
+    for (const sz of [1, -1]) {
+      const pivot = new THREE.Group();
+      pivot.position.set(sx * BODY.wide * 0.52, WHEEL_R, sz * 0.86);
+      const m = new THREE.Mesh(tyre, dark);
+      m.castShadow = true;
+      pivot.add(m);
+      pivot.userData.spinner = m;
+      pivot.userData.steers = sz > 0;
+      face.add(pivot);
+      wheels.push(pivot);
+    }
+  }
+  root.userData.wheels = wheels;
+  root.userData.hull = hull;
+  return root;
+}
+
+// ---------------------------------------------------------------- the cart
+export class Cart {
+  constructor(scene, { colour = 0xf2f4f6, ramp = null, ghost = false } = {}) {
+    this.root = buildCartMesh(colour, ramp);
+    this.root.visible = false;
+    scene.add(this.root);
+
+    this.pos = new THREE.Vector3();
+    this.heading = 0;          // radians, 0 = -Z
+    this.speed = 0;            // yards a second, signed
+    this.steer = 0;            // -1..1, smoothed
+    this.spin = 0;             // wheel rotation, for the render
+    this.lean = 0;             // body roll, ditto
+    this.pitch = 0;
+    this.bump = new THREE.Vector3();   // impulse from a collision, decays
+    this.ghost = ghost;        // an opponent's cart: driven by the wire
+    this._t = 0;
+  }
+
+  get visible() { return this.root.visible; }
+  set visible(v) { this.root.visible = v; }
+
+  place(x, z, heading) {
+    this.pos.set(x, heightAt(x, z), z);
+    this.heading = heading ?? 0;
+    this.speed = 0;
+    this.bump.set(0, 0, 0);
+    this._apply();
+  }
+
+  /** The point a passenger steps out at — beside the cart, on the left. */
+  dropPoint(out = new THREE.Vector3()) {
+    const s = Math.sin(this.heading), c = Math.cos(this.heading);
+    // Right-hand perpendicular to the heading, negated: out of the left side.
+    return out.set(this.pos.x + c * -1.5, 0, this.pos.z - s * -1.5);
+  }
+
+  /**
+   * One step.
+   *
+   * `input` is { throttle: -1..1, steer: -1..1 }. Everything else the cart
+   * works out for itself from where it is standing.
+   */
+  update(dt, input) {
+    this._t += dt;
+    if (this.ghost) { this._applyGhost(dt); return; }
+
+    const th = clamp(input?.throttle ?? 0, -1, 1);
+    const st = clamp(input?.steer ?? 0, -1, 1);
+    // Steering is smoothed rather than applied raw: a key is either down or it
+    // is not, and a cart that snaps to full lock on a keypress cannot be
+    // driven in a straight line.
+    this.steer = lerp(this.steer, st, 1 - Math.exp(-9 * dt));
+
+    const ground = surfaceAt(this.pos.x, this.pos.z);
+    const grip = GRIP[ground] ?? 0.8;
+    const top = TOP_SPEED * grip;
+
+    if (th > 0.01) this.speed += ACCEL * grip * th * dt;
+    else if (th < -0.01) this.speed -= (this.speed > 0 ? BRAKE : ACCEL * 0.7) * -th * dt;
+    else this.speed -= this.speed * DRAG * dt;
+
+    // Gravity along the slope. Only worth having on a real hill, so the
+    // deadband keeps the cart from creeping on ground that merely undulates.
+    const g = gradientAt(this.pos.x, this.pos.z);
+    const along = -(Math.sin(this.heading) * g.gx - Math.cos(this.heading) * g.gz);
+    if (Math.abs(along) > 0.04) this.speed += along * 9.0 * dt;
+
+    this.speed = clamp(this.speed, -REVERSE_SPEED * grip, top);
+    if (Math.abs(this.speed) < 0.04 && Math.abs(th) < 0.01) this.speed = 0;
+
+    // Turn rate falls off with speed, and reverses when reversing, because a
+    // cart backing up steers the other way and everyone expects it to.
+    const f = Math.min(1, Math.abs(this.speed) / TOP_SPEED);
+    const rate = lerp(TURN_SLOW, TURN_FAST, f);
+    const moving = Math.min(1, Math.abs(this.speed) / 1.2);
+    this.heading += this.steer * rate * dt * moving * Math.sign(this.speed || 1);
+
+    const s = Math.sin(this.heading), c = Math.cos(this.heading);
+    let nx = this.pos.x + (s * this.speed + this.bump.x) * dt;
+    let nz = this.pos.z + (-c * this.speed + this.bump.z) * dt;
+    this.bump.multiplyScalar(Math.exp(-3.4 * dt));
+
+    // Water and the world edge are walls, not hazards. Losing the cart down a
+    // cliff would need a recovery flow nobody asked for, and the honest fix is
+    // simply not to let it happen.
+    if (waterLevelAt(nx, nz) > -900 || isOutOfBounds(nx, nz)) {
+      this.speed *= -0.32;
+      this.bump.multiplyScalar(0.2);
+      nx = this.pos.x; nz = this.pos.z;
+    }
+
+    this.pos.x = nx;
+    this.pos.z = nz;
+    this.pos.y = heightAt(nx, nz);
+
+    // Cosmetics.
+    this.spin += (this.speed / WHEEL_R) * dt;
+    const want = -this.steer * f * 0.16;
+    this.lean = lerp(this.lean, want, 1 - Math.exp(-8 * dt));
+    this.pitch = lerp(this.pitch, clamp(-along * 0.6, -0.22, 0.22), 1 - Math.exp(-5 * dt));
+    this._apply();
+  }
+
+  /** A ghost cart is told where it is; it only has to get there smoothly. */
+  _applyGhost(dt) {
+    if (!this.target) { this._apply(); return; }
+    const k = 1 - Math.exp(-7 * dt);
+    this.pos.x = lerp(this.pos.x, this.target.x, k);
+    this.pos.z = lerp(this.pos.z, this.target.z, k);
+    this.pos.y = heightAt(this.pos.x, this.pos.z);
+    // Shortest way round, or a cart that crosses due south spins the long way.
+    let d = ((this.target.h - this.heading + Math.PI) % (Math.PI * 2)) - Math.PI;
+    if (d < -Math.PI) d += Math.PI * 2;
+    this.heading += d * k;
+    // Their speed is carried on the wire and kept here, not just used to spin
+    // the wheels. The collision reads it: without it a ghost is always
+    // stationary as far as the maths is concerned, so standing still while
+    // somebody drives into you at full pelt did nothing at all.
+    this.speed = this.target.v ?? 0;
+    this.spin += this.speed / WHEEL_R * dt;
+    this._apply();
+  }
+
+  _apply() {
+    this.root.position.copy(this.pos);
+    this.root.rotation.set(0, this.heading, 0);
+    const hull = this.root.userData.hull;
+    hull.rotation.set(this.pitch, 0, this.lean);
+    for (const w of this.root.userData.wheels) {
+      w.userData.spinner.rotation.x = this.spin;
+      w.rotation.y = w.userData.steers ? this.steer * 0.45 : 0;
+    }
+  }
+
+  /**
+   * Ram another cart.
+   *
+   * Each client runs its own cart and applies the bump to *itself* — the two
+   * sides never argue about who hit whom, because neither is allowed to move
+   * the other one. They agree because they are solving the same collision from
+   * opposite ends, and where they disagree slightly it is a ghost drifting a
+   * yard, which nobody can see and nothing depends on.
+   */
+  collide(other) {
+    if (!other || !other.root.visible) return 0;
+    const dx = this.pos.x - other.pos.x;
+    const dz = this.pos.z - other.pos.z;
+    const d = Math.hypot(dx, dz);
+    if (d > HIT_RADIUS * 2 || d < 1e-4) return 0;
+
+    const nx = dx / d, nz = dz / d;
+    // Closing speed along the line between them. Only a real shunt counts, so
+    // rolling gently alongside somebody does nothing.
+    const mine = Math.sin(this.heading) * this.speed * nx + -Math.cos(this.heading) * this.speed * nz;
+    const theirs = other.speed
+      ? Math.sin(other.heading) * other.speed * nx + -Math.cos(other.heading) * other.speed * nz
+      : 0;
+    const closing = Math.max(0, theirs - mine);
+
+    // Push apart first, so they cannot end up inside one another and stay
+    // there trading impulses for ever.
+    const overlap = HIT_RADIUS * 2 - d;
+    this.pos.x += nx * overlap * 0.5;
+    this.pos.z += nz * overlap * 0.5;
+
+    const kick = 3.2 + closing * 1.15;
+    this.bump.x += nx * kick;
+    this.bump.z += nz * kick;
+    this.speed *= 0.55;
+    // A shove also turns you, which is what makes it worth doing to somebody.
+    this.heading += (nx * Math.cos(this.heading) + nz * Math.sin(this.heading)) * 0.35;
+    return closing;
+  }
+
+  dispose() {
+    this.root.parent?.remove(this.root);
+    this.root.traverse((o) => {
+      if (o.geometry) o.geometry.dispose();
+      if (o.material) o.material.dispose();
+    });
+  }
+}
+
+// ---------------------------------------------------------------- controls
+/**
+ * Keyboard and thumb.
+ *
+ * Both feed one { throttle, steer } object because the cart should not know
+ * or care which is driving it — and because on a laptop with a touchscreen
+ * both are live at once, and a cart that listened to only the last one used
+ * would stall every time a hand moved.
+ */
+export function createCartControls() {
+  const keys = new Set();
+  const onKey = (e, down) => {
+    const k = e.key.toLowerCase();
+    if (['w', 'a', 's', 'd', 'arrowup', 'arrowdown', 'arrowleft', 'arrowright'].includes(k)) {
+      if (down) keys.add(k); else keys.delete(k);
+      if (state.active) e.preventDefault();
+    }
+  };
+  window.addEventListener('keydown', (e) => onKey(e, true));
+  window.addEventListener('keyup', (e) => onKey(e, false));
+  // A key held while the window loses focus is a key that never comes up.
+  window.addEventListener('blur', () => keys.clear());
+
+  const state = { active: false, touch: { throttle: 0, steer: 0 } };
+  const el = buildPad(state);
+
+  return {
+    setActive(on) {
+      state.active = on;
+      el.classList.toggle('on', on);
+      if (!on) { keys.clear(); state.touch.throttle = 0; state.touch.steer = 0; }
+    },
+    read() {
+      let throttle = 0, steer = 0;
+      if (keys.has('w') || keys.has('arrowup')) throttle += 1;
+      if (keys.has('s') || keys.has('arrowdown')) throttle -= 1;
+      if (keys.has('a') || keys.has('arrowleft')) steer -= 1;
+      if (keys.has('d') || keys.has('arrowright')) steer += 1;
+      return {
+        throttle: clamp(throttle + state.touch.throttle, -1, 1),
+        steer: clamp(steer + state.touch.steer, -1, 1),
+      };
+    },
+  };
+}
+
+function buildPad(state) {
+  const style = document.createElement('style');
+  style.textContent = `
+    #drivePad{position:fixed;inset:0;z-index:20;pointer-events:none;
+      opacity:0;transition:opacity .25s ease}
+    #drivePad.on{opacity:1}
+    #drivePad .dBtn{
+      position:absolute;bottom:max(26px,env(safe-area-inset-bottom));
+      width:74px;height:74px;border-radius:18px;pointer-events:auto;
+      display:grid;place-items:center;font-size:26px;font-weight:900;
+      color:#fff;text-shadow:0 2px 0 rgba(0,0,0,.35);cursor:pointer;
+      border:3px solid var(--ink);user-select:none;touch-action:none;
+      background:linear-gradient(180deg,#fdf6e6,#c8a86e);
+      box-shadow:0 5px 0 rgba(61,39,22,.6),inset 0 2px 0 rgba(255,255,255,.5);
+    }
+    #drivePad .dBtn.down{transform:translateY(4px);box-shadow:0 1px 0 rgba(61,39,22,.6)}
+    #dLeft{left:22px} #dRight{left:112px}
+    #dRev{right:112px;background:linear-gradient(180deg,#e3945f,#b34627)}
+    #dGo{right:22px;width:88px;height:88px;
+      background:linear-gradient(180deg,#9ad966,#4f9330)}
+  `;
+  document.head.appendChild(style);
+
+  const pad = document.createElement('div');
+  pad.id = 'drivePad';
+  pad.innerHTML = `
+    <div class="dBtn" id="dLeft">◀</div>
+    <div class="dBtn" id="dRight">▶</div>
+    <div class="dBtn" id="dRev">▼</div>
+    <div class="dBtn" id="dGo">▲</div>`;
+  document.body.appendChild(pad);
+
+  const hold = (id, set) => {
+    const b = pad.querySelector('#' + id);
+    const down = (e) => { e.preventDefault(); b.classList.add('down'); set(); };
+    const up = () => { b.classList.remove('down'); set(0); };
+    b.addEventListener('pointerdown', down);
+    // Released on the button, off it, or when the pointer is taken away —
+    // miss any of the three and the cart drives off on its own.
+    b.addEventListener('pointerup', up);
+    b.addEventListener('pointerleave', up);
+    b.addEventListener('pointercancel', up);
+  };
+  hold('dGo', (v) => { state.touch.throttle = v === 0 ? 0 : 1; });
+  hold('dRev', (v) => { state.touch.throttle = v === 0 ? 0 : -1; });
+  hold('dLeft', (v) => { state.touch.steer = v === 0 ? 0 : -1; });
+  hold('dRight', (v) => { state.touch.steer = v === 0 ? 0 : 1; });
+
+  return pad;
+}

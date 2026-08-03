@@ -118,6 +118,33 @@ export class CameraRig {
         break;
       }
 
+      // ---- driving: a chase camera behind the cart ----
+      //
+      // Framed from the cart's heading rather than from its velocity. Velocity
+      // is the obvious choice and it is wrong: reverse into a tree and the
+      // camera whips round to look at your own bonnet, and stopping dead
+      // leaves it with no direction at all. Heading always has one.
+      //
+      // It also sits further back the faster you go, which is the whole of
+      // what makes speed feel like speed when the geometry is this simple.
+      case 'drive': {
+        const c = ctx.cart;
+        const sp = Math.min(1, Math.abs(c.speed) / 12);
+        const back = 7.4 + sp * 3.2;
+        const hs = Math.sin(c.heading), hc = Math.cos(c.heading);
+        this.desiredPos.set(
+          c.pos.x - hs * back, c.pos.y + 3.5 + sp * 0.5, c.pos.z + hc * back
+        );
+        this.desiredLook.set(
+          c.pos.x + hs * 7, c.pos.y + 1.3, c.pos.z - hc * 7
+        );
+        this.desiredFov = 56 + sp * 8;
+        // Loose on the way in, tight on the way round, so a turn reads as a
+        // turn instead of the world sliding past a fixed camera.
+        lamPos = 3.6; lamLook = 5.0;
+        break;
+      }
+
       // ---- holed out: a slow, quiet orbit ----
       case 'holed': {
         const a = this.time * 0.16;
