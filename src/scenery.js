@@ -69,6 +69,7 @@ export const TIMES = {
     hemiIntensity: 0.92,
     rim: 0xffc9a0,
     fog: 0xf2e2d4,
+    lava: 0xff7d2c, lavaGlow: 0.85,
     sky: [
       [0.00, '#4f86c6'], [0.26, '#8fb6dd'], [0.55, '#dcc6c4'],
       [0.80, '#f6d6b4'], [1.00, '#ffe6c6'],
@@ -86,6 +87,10 @@ export const TIMES = {
     hemiIntensity: 1.14,
     rim: 0xcdecff,
     fog: 0xdcf0fa,
+    // Barely there. A crater in full sun is a dark hole with a dull red floor;
+    // painting it bright at midday is the single fastest way to make a volcano
+    // look like a birthday cake.
+    lava: 0x8a3a18, lavaGlow: 0.0,
     sky: [
       [0.00, '#5fb4e9'], [0.28, '#8ccdf0'], [0.58, '#b8e2f7'],
       [0.82, '#d9f0fb'], [1.00, '#e9f7fd'],
@@ -105,6 +110,7 @@ export const TIMES = {
     hemiIntensity: 0.82,
     rim: 0xffa877,
     fog: 0xf0d3c0,
+    lava: 0xff5c14, lavaGlow: 1.0,
     sky: [
       [0.00, '#3f6fb4'], [0.24, '#7c9bd0'], [0.52, '#d3a9b8'],
       [0.78, '#f7b98a'], [1.00, '#ffd9a3'],
@@ -272,11 +278,58 @@ function forestRidgeGeo(rnd, w, top, d) {
  *   and the crater is off-centre with one side of its rim blown lower than the
  *     other, which is how they almost always are.
  */
+/**
+ * Concatenate geometries into one buffer.
+ *
+ * A layer's ridges share a material and never move relative to one another, so
+ * as separate meshes they were sixty-six draw calls buying nothing that three
+ * could not. Baking each one's placement into its vertices and concatenating
+ * costs a little memory once, at build time, and hands the GPU one buffer.
+ */
+function mergeGeos(geos) {
+  let vTotal = 0, iTotal = 0;
+  for (const g of geos) { vTotal += g.attributes.position.count; iTotal += g.index.count; }
+  const position = new Float32Array(vTotal * 3);
+  const normal = new Float32Array(vTotal * 3);
+  const index = vTotal > 65535 ? new Uint32Array(iTotal) : new Uint16Array(iTotal);
+  let vo = 0, io = 0;
+  for (const g of geos) {
+    position.set(g.attributes.position.array, vo * 3);
+    normal.set(g.attributes.normal.array, vo * 3);
+    const src = g.index.array;
+    for (let k = 0; k < src.length; k++) index[io + k] = src[k] + vo;
+    vo += g.attributes.position.count;
+    io += src.length;
+    g.dispose();
+  }
+  const out = new THREE.BufferGeometry();
+  out.setAttribute('position', new THREE.BufferAttribute(position, 3));
+  out.setAttribute('normal', new THREE.BufferAttribute(normal, 3));
+  out.setIndex(new THREE.BufferAttribute(index, 1));
+  return out;
+}
+
+/** A soft radial bloom, for the light a crater throws into the haze. */
+function glowTexture() {
+  const S = 128;
+  const cv = document.createElement('canvas');
+  cv.width = cv.height = S;
+  const ctx = cv.getContext('2d');
+  const g = ctx.createRadialGradient(S / 2, S / 2, 0, S / 2, S / 2, S / 2);
+  g.addColorStop(0.00, 'rgba(255,255,255,1)');
+  g.addColorStop(0.16, 'rgba(255,214,140,0.72)');
+  g.addColorStop(0.42, 'rgba(255,120,40,0.26)');
+  g.addColorStop(1.00, 'rgba(255,90,20,0)');
+  ctx.fillStyle = g;
+  ctx.fillRect(0, 0, S, S);
+  const tex = new THREE.CanvasTexture(cv);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  return tex;
+}
+
 function volcanoGeo(rnd, w, top, d) {
   const RAD = 96;      // around
   const RING = 34;     // summit to base
-  const pos = new Float32Array((RAD + 1) * (RING + 1) * 3);
-  const idx = new Uint32Array(RAD * RING * 6);
 
   // Its own character, drawn once so every vertex agrees about it.
   const lobeA = rnd() * Math.PI * 2;
@@ -288,61 +341,92 @@ function volcanoGeo(rnd, w, top, d) {
   const breach = rnd() * Math.PI * 2;         // the low side of the rim
   const flank = 1.35 + rnd() * 0.55;          // how concave
 
-  let v = 0;
-  for (let j = 0; j <= RING; j++) {
-    // Bunched toward the summit, where the curvature is.
-    const t = Math.pow(j / RING, 1.35);
-    for (let i = 0; i <= RAD; i++) {
-      const a = (i / RAD) * Math.PI * 2;
+  // The surface, as a function of angle and distance from the summit. Both the
+  // cone and the lava on it are built from this one call, so the lava sits on
+  // the rock exactly rather than approximately.
+  const surf = (a, t, out) => {
+    const lobe = 1 + 0.13 * Math.sin(a * 3 + lobeA) + 0.07 * Math.sin(a * 7 + lobeB);
+    let r = t * lobe;
+    let h = Math.pow(1 - t, flank);
 
-      // Lobed outline, so no two directions off the summit are the same.
-      const lobe = 1 + 0.13 * Math.sin(a * 3 + lobeA) + 0.07 * Math.sin(a * 7 + lobeB);
-      let r = t * lobe;
+    // Rills: shallow at the top, deep at the bottom.
+    const rill = Math.sin(a * rills + rillPh + t * 2.4);
+    h -= 0.055 * t * (1 - t) * (rill * 0.5 + 0.5) * 2.0;
+    r += 0.035 * t * rill;
 
-      // The profile. 1 at the summit falling to 0 at the base, concave.
-      let h = Math.pow(1 - t, flank);
-
-      // Rills: shallow at the top, deep at the bottom.
-      const rill = Math.sin(a * rills + rillPh + t * 2.4);
-      h -= 0.055 * t * (1 - t) * (rill * 0.5 + 0.5) * 2.0;
-      r += 0.035 * t * rill;
-
-      // The crater, and its low side.
-      if (t < craterR) {
-        const u = t / craterR;
-        h -= (craterD / top) * (1 - u * u);
-      }
-      const rimLow = Math.cos(a - breach) * 0.5 + 0.5;
-      if (t < craterR * 1.5) {
-        h -= (craterD / top) * 0.55 * rimLow * (1 - t / (craterR * 1.5));
-      }
-
-      pos[v] = Math.cos(a) * r * w;
-      pos[v + 1] = h * top;
-      pos[v + 2] = Math.sin(a) * r * d;
-      v += 3;
+    // The crater, and its low side.
+    if (t < craterR) {
+      const u = t / craterR;
+      h -= (craterD / top) * (1 - u * u);
     }
-  }
-
-  let k = 0;
-  for (let j = 0; j < RING; j++) {
-    for (let i = 0; i < RAD; i++) {
-      const a0 = j * (RAD + 1) + i;
-      const b0 = a0 + RAD + 1;
-      idx[k++] = a0; idx[k++] = b0; idx[k++] = a0 + 1;
-      idx[k++] = a0 + 1; idx[k++] = b0; idx[k++] = b0 + 1;
+    const rimLow = Math.cos(a - breach) * 0.5 + 0.5;
+    if (t < craterR * 1.5) {
+      h -= (craterD / top) * 0.55 * rimLow * (1 - t / (craterR * 1.5));
     }
-  }
 
-  const geo = new THREE.BufferGeometry();
-  geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
-  geo.setIndex(new THREE.BufferAttribute(idx, 1));
-  // Sunk, so the skirt of the cone is under the horizon rather than sitting on
-  // it like a plate.
-  geo.translate(0, -top * 0.06, 0);
-  geo.computeVertexNormals();
-  return geo;
+    out[0] = Math.cos(a) * r * w;
+    out[1] = h * top;
+    out[2] = Math.sin(a) * r * d;
+    return out;
+  };
+
+  const grid = (rad, ring, t0, t1, a0, a1, lift, bend) => {
+    const pos = new Float32Array((rad + 1) * (ring + 1) * 3);
+    const idx = new Uint32Array(rad * ring * 6);
+    const p = [0, 0, 0];
+    let v = 0;
+    for (let j = 0; j <= ring; j++) {
+      const t = t0 + (t1 - t0) * (bend ? Math.pow(j / ring, bend) : j / ring);
+      for (let i = 0; i <= rad; i++) {
+        const a = a0 + (a1 - a0) * (i / rad);
+        surf(a, t, p);
+        // Lifted clear of the rock along its own radius, so the lava never
+        // fights the cone for the same pixel at any distance.
+        pos[v] = p[0] * (1 + lift);
+        pos[v + 1] = p[1] + top * lift * 0.6;
+        pos[v + 2] = p[2] * (1 + lift);
+        v += 3;
+      }
+    }
+    let k = 0;
+    for (let j = 0; j < ring; j++) {
+      for (let i = 0; i < rad; i++) {
+        const b0 = j * (rad + 1) + i;
+        const b1 = b0 + rad + 1;
+        idx[k++] = b0; idx[k++] = b1; idx[k++] = b0 + 1;
+        idx[k++] = b0 + 1; idx[k++] = b1; idx[k++] = b1 + 1;
+      }
+    }
+    const g = new THREE.BufferGeometry();
+    g.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+    g.setIndex(new THREE.BufferAttribute(idx, 1));
+    g.computeVertexNormals();
+    return g;
+  };
+
+  // The cone. Rings bunched toward the summit, where the curvature is.
+  const body = grid(RAD, RING, 0, 1, 0, Math.PI * 2, 0, 1.35);
+  // Sunk, so the skirt is under the horizon rather than sitting on it
+  // like a plate.
+  body.translate(0, -top * 0.06, 0);
+
+  // The lava: the crater floor and its rim, then two or three tongues running
+  // down the flank from the low side of it. A crater alone is a dot at this
+  // distance — the tongues are what say the thing is alive.
+  const caps = [grid(48, 8, 0, craterR * 1.25, 0, Math.PI * 2, 0.004, 1)];
+  const tongues = 2 + Math.floor(rnd() * 3);
+  for (let i = 0; i < tongues; i++) {
+    const a = breach + lerp(-0.9, 0.9, rnd());
+    const half = 0.035 + rnd() * 0.045;
+    caps.push(grid(3, 14, craterR * 0.9, craterR + lerp(0.10, 0.34, rnd()),
+                   a - half, a + half, 0.006, 1.6));
+  }
+  const lava = mergeGeos(caps);
+  lava.translate(0, -top * 0.06, 0);
+
+  return { body, lava };
 }
+
 
 export function createBackdrop(toonRamp) {
   const group = new THREE.Group();
@@ -383,12 +467,21 @@ export function createBackdrop(toonRamp) {
   const LAYERS = COURSE.coastal ? [
     // Kept inside the fog. The scene fogs out entirely at 2600 yards, so a
     // volcano standing further back than that is a white cut-out however it is
-    // coloured — and the fog is what tints the backdrop at sunrise and sunset,
-    // so putting the backdrop outside it would freeze the horizon at midday.
-    // Big and near rather than huge and far.
-    { count: 8,  ringR: 820,  top: [260, 400], w: [430, 700],   d: [340, 560],  color: 0x2b4636 },
-    { count: 9,  ringR: 1350, top: [400, 600], w: [660, 1050],  d: [520, 840],  color: 0x33544f },
-    { count: 10, ringR: 1950, top: [560, 860], w: [920, 1500],  d: [720, 1180], color: 0x3f606c },
+    // Black rock, kept close, and only two layers deep.
+    //
+    // The scene mixes fully to the sky colour at 2600 yards, so distance and
+    // blackness are in direct competition here in a way they are not for the
+    // green ridges: a black mountain at fifteen hundred comes back a pale
+    // warm grey, which reads as snow rather than as distance — and snow on a
+    // Pacific volcano is a different island entirely. Three layers put one of
+    // them out there however they were arranged, so there are two, both well
+    // inside the haze, with enough of them to close the horizon anyway.
+    //
+    // The two blacks are not the same black. The fog lifts each toward the
+    // sky, and starting them equal would collapse both into one silhouette at
+    // exactly the distance where the separation earns its keep.
+    { count: 10, ringR: 740,  top: [250, 390], w: [420, 680], d: [330, 540], color: 0x121316 },
+    { count: 12, ringR: 1080, top: [350, 520], w: [580, 920], d: [460, 730], color: 0x1e232b },
   ] : [
     // Cool and clearly darker than the course, but not black: the ramp's
     // shadow band already multiplies these by ~0.48, and the far side of the
@@ -399,36 +492,11 @@ export function createBackdrop(toonRamp) {
     { count: 26, ringR: 1500, top: [210, 330], w: [380, 620], d: [240, 380], color: 0x577f89 },
   ];
 
-  // One mesh per layer, not one per ridge.
-  //
-  // A layer's ridges already share a material and never move relative to one
-  // another, so they were sixty-six draw calls buying nothing that three could
-  // not. Baking each ridge's placement into its vertices and concatenating
-  // costs a little memory once, at build time, and hands the GPU one buffer.
-  const merge = (geos) => {
-    let vTotal = 0, iTotal = 0;
-    for (const g of geos) { vTotal += g.attributes.position.count; iTotal += g.index.count; }
-    const position = new Float32Array(vTotal * 3);
-    const normal = new Float32Array(vTotal * 3);
-    const index = vTotal > 65535 ? new Uint32Array(iTotal) : new Uint16Array(iTotal);
-    let vo = 0, io = 0;
-    for (const g of geos) {
-      position.set(g.attributes.position.array, vo * 3);
-      normal.set(g.attributes.normal.array, vo * 3);
-      const src = g.index.array;
-      for (let k = 0; k < src.length; k++) index[io + k] = src[k] + vo;
-      vo += g.attributes.position.count;
-      io += src.length;
-      g.dispose();
-    }
-    const out = new THREE.BufferGeometry();
-    out.setAttribute('position', new THREE.BufferAttribute(position, 3));
-    out.setAttribute('normal', new THREE.BufferAttribute(normal, 3));
-    out.setIndex(new THREE.BufferAttribute(index, 1));
-    return out;
-  };
+  const merge = mergeGeos;
 
   const place = new THREE.Matrix4();
+  const lavaParts = [];
+  const craters = [];
   for (const L of LAYERS) {
     const mat = new THREE.MeshToonMaterial({ color: L.color, gradientMap: toonRamp });
     const parts = [];
@@ -443,12 +511,22 @@ export function createBackdrop(toonRamp) {
       const px = WORLD_CX + Math.sin(a) * r;
       const pz = WORLD_CZ + Math.cos(a) * r;
       if (openWater(px, pz, w)) continue;
-      const shape = COURSE.coastal ? volcanoGeo : forestRidgeGeo;
-      const geo = shape(rnd, w, top, d);
       place.makeRotationY(a);
       place.setPosition(px, 0, pz);
-      geo.applyMatrix4(place);
-      parts.push(geo);
+
+      if (COURSE.coastal) {
+        const v = volcanoGeo(rnd, w, top, d);
+        v.body.applyMatrix4(place);
+        v.lava.applyMatrix4(place);
+        parts.push(v.body);
+        lavaParts.push(v.lava);
+        // The crater sits at the summit less the amount the cone is sunk.
+        craters.push({ x: px, y: top * 0.86, z: pz, r: top });
+      } else {
+        const geo = forestRidgeGeo(rnd, w, top, d);
+        geo.applyMatrix4(place);
+        parts.push(geo);
+      }
     }
     if (!parts.length) continue;
     const mesh = new THREE.Mesh(merge(parts), mat);
@@ -457,6 +535,53 @@ export function createBackdrop(toonRamp) {
     mesh.frustumCulled = false;
     mesh.renderOrder = -88;
     group.add(mesh);
+  }
+
+  // The lava, and the light it throws.
+  //
+  // Unlit, and drawn after the cones. Molten rock is a source, not a surface —
+  // running it through the toon ramp would band it and hand it a shadow side,
+  // which is the one thing a light cannot have.
+  //
+  // What changes with the hour is not the rock. Lava is the same temperature at
+  // noon as at dusk; what changes is how much light is falling on everything
+  // around it, so the same glow that is lost in the sun is the brightest thing
+  // on the horizon an hour later. So the colour steps with the time of day and
+  // the bloom over it is simply switched off in daylight.
+  if (lavaParts.length) {
+    const tod = timeOfDay();
+    const lavaMesh = new THREE.Mesh(mergeGeos(lavaParts), new THREE.MeshBasicMaterial({
+      color: tod.lava ?? 0x8a3a18,
+      fog: true,          // still sits behind the same haze the rock does
+      toneMapped: false,
+    }));
+    lavaMesh.castShadow = lavaMesh.receiveShadow = false;
+    lavaMesh.frustumCulled = false;
+    lavaMesh.renderOrder = -86;
+    group.add(lavaMesh);
+
+    const glow = tod.lavaGlow ?? 0;
+    if (glow > 0.01) {
+      const tex = glowTexture();
+      for (const c of craters) {
+        const sp = new THREE.Sprite(new THREE.SpriteMaterial({
+          // Depth-tested. Without it the bloom paints over the fairway and
+          // the trees in front of the mountain, which is not what a light on
+          // the horizon does.
+          map: tex, transparent: true, depthWrite: false, depthTest: true,
+          blending: THREE.AdditiveBlending, opacity: glow * 0.5,
+          color: tod.lava ?? 0xff6a20, fog: false,
+        }));
+        // Scaled to the mountain, not fixed: a bloom the same size on a
+        // four-hundred-yard cone and a nine-hundred-yard one reads as a lamp
+        // on one of them.
+        const sz = c.r * 0.30;
+        sp.scale.set(sz, sz, 1);
+        sp.position.set(c.x, c.y, c.z);
+        sp.renderOrder = -85;
+        group.add(sp);
+      }
+    }
   }
 
   // Two low islands far out over the water.
