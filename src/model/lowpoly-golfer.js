@@ -149,6 +149,38 @@ function slab(w, h, d, x = 0, y = 0, z = 0, rot = null) {
   return g;
 }
 
+/**
+ * A flat plate from a 2-D outline, extruded along Z.
+ *
+ * For the things that really are flat and really do have a shape — a collar
+ * point, a shield badge. Approximating those with boxes was the last place on
+ * the model where the low-poly style was doing the work of hiding something
+ * rather than describing it.
+ */
+function plate(outline, thickness, x = 0, y = 0, z = 0, rot = null) {
+  const n = outline.length;
+  const pos = [];
+  const P = (a, b, c) => pos.push(a[0], a[1], a[2], b[0], b[1], b[2], c[0], c[1], c[2]);
+  const t = thickness / 2;
+  const front = outline.map(([px, py]) => [px, py, t]);
+  const back = outline.map(([px, py]) => [px, py, -t]);
+  for (let i = 1; i < n - 1; i++) {
+    P(front[0], front[i], front[i + 1]);
+    P(back[0], back[i + 1], back[i]);
+  }
+  for (let i = 0; i < n; i++) {
+    const j = (i + 1) % n;
+    P(front[i], back[i], front[j]);
+    P(front[j], back[i], back[j]);
+  }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  if (rot) g.rotateX(rot[0] || 0), g.rotateY(rot[1] || 0), g.rotateZ(rot[2] || 0);
+  g.translate(x, y, z);
+  g.computeVertexNormals();
+  return g;
+}
+
 function mesh(geo, mat, name) {
   const m = new THREE.Mesh(geo, mat);
   m.name = name;
@@ -195,49 +227,92 @@ function buildHead(M) {
   const { headBottom: chin, headTop: top } = RIG;
   const h = top - chin;
 
-  // Jaw narrow, cheekbones widest, crown tucked back in. The widest point is
-  // above the ear and not at the jaw, which is the single cue that reads as
-  // "male adult" rather than "child" at this polygon count.
+  // A HEAD IS DEEPER THAN IT IS WIDE, AND THE FIRST ONE HERE WAS ROUND.
+  //
+  // Roughly 155 mm across, 200 mm front to back, 236 mm tall. Built from
+  // near-circular rings it came out as an egg on a stalk — too narrow at the
+  // temples, too shallow at the back, and tapering to a point at the chin,
+  // which together read as a caricature rather than as a man. So the squash
+  // runs about 1.3 throughout: that one number is the difference.
+  //
+  // The jaw is wide and the taper stops well short of the bottom. A head that
+  // narrows all the way to the chin has no mandible in it, and the mandible is
+  // half of what makes a face male.
   const skull = loft([
-    { y: chin,             pts: ring(N, 0.052, 0.86), oz: 0.004 },
-    { y: chin + h * 0.16,  pts: ring(N, 0.072, 0.90), oz: 0.006 },
-    { y: chin + h * 0.36,  pts: ring(N, 0.085, 0.96), oz: 0.004 },
-    { y: chin + h * 0.55,  pts: ring(N, 0.089, 1.00) },
-    { y: chin + h * 0.74,  pts: ring(N, 0.086, 1.02), oz: -0.004 },
-    { y: chin + h * 0.90,  pts: ring(N, 0.070, 1.02), oz: -0.006 },
-    { y: top,              pts: ring(N, 0.040, 1.00), oz: -0.008 },
+    { y: chin,             pts: ring(N, 0.061, 1.16), oz: 0.010 },
+    { y: chin + h * 0.13,  pts: ring(N, 0.068, 1.22), oz: 0.010 },
+    { y: chin + h * 0.28,  pts: ring(N, 0.075, 1.26), oz: 0.006 },
+    { y: chin + h * 0.44,  pts: ring(N, 0.078, 1.30), oz: 0.002 },
+    { y: chin + h * 0.60,  pts: ring(N, 0.079, 1.32) },
+    { y: chin + h * 0.76,  pts: ring(N, 0.077, 1.32), oz: -0.004 },
+    { y: chin + h * 0.90,  pts: ring(N, 0.066, 1.28), oz: -0.008 },
+    { y: top,              pts: ring(N, 0.042, 1.16), oz: -0.012 },
   ]);
   g.add(mesh(skull, M.skin, 'Head_Skull'));
 
-  const eyeY = chin + h * 0.55;
-  const faceZ = 0.083;
+  const eyeY = chin + h * 0.56;
+  const faceZ = 0.104;   // the front of the face, now the skull is deeper
 
-  // Nose: a wedge, three faces. Any more and it stops being low-poly; any
-  // fewer and the profile has nothing in it.
-  const nose = loft([
-    { y: eyeY - 0.052, pts: boxRing(6, 0.019, 0.011, 0.5), oz: faceZ * 0.62 },
-    { y: eyeY - 0.028, pts: boxRing(6, 0.016, 0.019, 0.5), oz: faceZ * 0.70 },
-    { y: eyeY + 0.004, pts: boxRing(6, 0.011, 0.010, 0.5), oz: faceZ * 0.66 },
-  ]);
-  g.add(mesh(nose, M.skin, 'Head_Nose'));
+  // Brow ridge. One wedge across the forehead, and it does more for the face
+  // than anything else here: it is what puts the eyes in shadow, and eyes in
+  // shadow are most of what separates a head from an egg.
+  g.add(mesh(loft([
+    { y: eyeY + 0.012, pts: boxRing(8, 0.068, 0.024, 0.7), oz: faceZ * 0.44 },
+    { y: eyeY + 0.032, pts: boxRing(8, 0.070, 0.030, 0.7), oz: faceZ * 0.38 },
+  ], { capBottom: false }), M.skin, 'Head_Brow'));
 
-  // Ears
-  for (const s of [-1, 1]) {
-    g.add(mesh(slab(0.012, 0.044, 0.028, s * 0.086, eyeY - 0.006, -0.004), M.skin,
-      s < 0 ? 'Head_EarL' : 'Head_EarR'));
+  // Cheekbones, which give the middle of the face somewhere to be.
+  for (const sd of [-1, 1]) {
+    g.add(mesh(loft([
+      { y: eyeY - 0.044, pts: boxRing(6, 0.024, 0.024, 0.9), ox: sd * 0.046, oz: faceZ * 0.38 },
+      { y: eyeY - 0.010, pts: boxRing(6, 0.027, 0.030, 0.9), ox: sd * 0.049, oz: faceZ * 0.34 },
+    ], { capBottom: false, capTop: false }), M.skin, sd < 0 ? 'Head_CheekL' : 'Head_CheekR'));
   }
 
-  // Eyes and brows, set into the face rather than stuck on it.
-  for (const s of [-1, 1]) {
-    g.add(mesh(slab(0.026, 0.011, 0.008, s * 0.036, eyeY, faceZ * 0.86), M.eye,
-      s < 0 ? 'Head_EyeL' : 'Head_EyeR'));
-    g.add(mesh(slab(0.032, 0.008, 0.010, s * 0.037, eyeY + 0.026, faceZ * 0.84,
-      [0, 0, s * 0.10]), M.hair, s < 0 ? 'Head_BrowL' : 'Head_BrowR'));
+  // Nose: bridge, tip, and a nostril block under it. Three pieces, because a
+  // single wedge has no underside and the profile view is where a nose earns
+  // its polygons.
+  g.add(mesh(loft([
+    { y: eyeY - 0.048, pts: boxRing(6, 0.017, 0.014, 0.6), oz: faceZ * 0.56 },
+    { y: eyeY - 0.016, pts: boxRing(6, 0.014, 0.022, 0.6), oz: faceZ * 0.62 },
+    { y: eyeY + 0.014, pts: boxRing(6, 0.010, 0.012, 0.7), oz: faceZ * 0.52 },
+  ]), M.skin, 'Head_Nose'));
+  g.add(mesh(slab(0.026, 0.010, 0.016, 0, eyeY - 0.050, faceZ * 0.58), M.skin, 'Head_Nostrils'));
+
+  // Ears, lofted rather than slabbed — a rectangle on the side of a head is
+  // the most obviously wrong thing a low-poly figure can have.
+  for (const sd of [-1, 1]) {
+    g.add(mesh(loft([
+      { y: eyeY - 0.026, pts: boxRing(6, 0.006, 0.012, 0.9), ox: sd * 0.078, oz: -0.004 },
+      { y: eyeY - 0.002, pts: boxRing(6, 0.008, 0.019, 0.9), ox: sd * 0.081, oz: -0.002 },
+      { y: eyeY + 0.020, pts: boxRing(6, 0.006, 0.014, 0.9), ox: sd * 0.079, oz: -0.004 },
+    ]), M.skin, sd < 0 ? 'Head_EarL' : 'Head_EarR'));
   }
 
-  // Mouth: a shallow wedge turned up at the corners. A flat bar reads as a
-  // grimace; the tilt is the whole difference between the two.
-  g.add(mesh(slab(0.040, 0.007, 0.008, 0, chin + h * 0.24, faceZ * 0.80), M.eye, 'Head_Mouth'));
+  // Eyes, set under the brow and angled slightly, with a lid above each.
+  for (const sd of [-1, 1]) {
+    g.add(mesh(slab(0.024, 0.010, 0.008, sd * 0.036, eyeY, faceZ * 0.70,
+      [0, 0, sd * 0.05]), M.eye, sd < 0 ? 'Head_EyeL' : 'Head_EyeR'));
+    g.add(mesh(slab(0.028, 0.007, 0.009, sd * 0.037, eyeY + 0.008, faceZ * 0.69,
+      [0, 0, sd * 0.06]), M.skin, sd < 0 ? 'Head_LidL' : 'Head_LidR'));
+    g.add(mesh(slab(0.030, 0.008, 0.010, sd * 0.038, eyeY + 0.024, faceZ * 0.67,
+      [0, 0, sd * 0.13]), M.hair, sd < 0 ? 'Head_BrowL' : 'Head_BrowR'));
+  }
+
+  // Mouth: two short bars meeting in the middle and tilted up at the ends.
+  // One straight bar is a grimace, and the tilt is the entire difference.
+  for (const sd of [-1, 1]) {
+    g.add(mesh(slab(0.024, 0.006, 0.008,
+      sd * 0.012, chin + h * 0.235, faceZ * 0.66, [0, 0, sd * 0.22]),
+      M.eye, sd < 0 ? 'Head_MouthL' : 'Head_MouthR'));
+  }
+
+  // Chin and jawline. The mandible is a plane, not a curve, and cutting it in
+  // is what stops the lower face reading as a chin-less blob.
+  g.add(mesh(loft([
+    { y: chin + 0.002, pts: boxRing(8, 0.034, 0.024, 0.85), oz: 0.032 },
+    { y: chin + 0.034, pts: boxRing(8, 0.046, 0.034, 0.85), oz: 0.030 },
+  ], { capTop: false }), M.skin, 'Head_Chin'));
 
   return g;
 }
@@ -253,22 +328,22 @@ function buildHair(M) {
   // geometry nobody will ever see.
   const N = 10;
   const back = loft([
-    { y: chin + h * 0.42, pts: ring(N, 0.089, 1.00), oz: -0.010 },
-    { y: chin + h * 0.70, pts: ring(N, 0.093, 1.02), oz: -0.012 },
-    { y: chin + h * 0.92, pts: ring(N, 0.074, 1.02), oz: -0.014 },
+    { y: chin + h * 0.34, pts: ring(N, 0.079, 1.30), oz: -0.008 },
+    { y: chin + h * 0.50, pts: ring(N, 0.082, 1.32), oz: -0.010 },
+    { y: chin + h * 0.62, pts: ring(N, 0.081, 1.32), oz: -0.010 },
   ], { capTop: false, capBottom: false });
   g.add(mesh(back, M.hair, 'Hair_Shell'));
 
   // Fringe under the brim.
-  g.add(mesh(slab(0.128, 0.026, 0.030, 0, chin + h * 0.795, 0.056, [0.20, 0, 0]),
+  g.add(mesh(slab(0.116, 0.022, 0.028, 0, chin + h * 0.545, 0.086, [0.20, 0, 0]),
     M.hair, 'Hair_Fringe'));
 
   // Sideburns, tapered down in front of the ear rather than square.
   for (const s of [-1, 1]) {
     g.add(mesh(loft([
-      { y: chin + h * 0.40, pts: boxRing(6, 0.007, 0.016, 0.6), ox: s * 0.083, oz: -0.004 },
-      { y: chin + h * 0.58, pts: boxRing(6, 0.010, 0.030, 0.6), ox: s * 0.086, oz: -0.006 },
-      { y: chin + h * 0.74, pts: boxRing(6, 0.011, 0.036, 0.6), ox: s * 0.086, oz: -0.008 },
+      { y: chin + h * 0.30, pts: boxRing(6, 0.007, 0.020, 0.6), ox: s * 0.075, oz: -0.006 },
+      { y: chin + h * 0.44, pts: boxRing(6, 0.010, 0.036, 0.6), ox: s * 0.077, oz: -0.008 },
+      { y: chin + h * 0.56, pts: boxRing(6, 0.011, 0.042, 0.6), ox: s * 0.077, oz: -0.010 },
     ]), M.hair, s < 0 ? 'Hair_SideL' : 'Hair_SideR'));
   }
 
@@ -277,9 +352,9 @@ function buildHair(M) {
   // corners and every other part of the silhouette does the work of pretending
   // that it might.
   g.add(mesh(loft([
-    { y: chin + h * 0.20, pts: boxRing(8, 0.040, 0.012, 0.9), oz: -0.070 },
-    { y: chin + h * 0.34, pts: boxRing(8, 0.055, 0.020, 0.8), oz: -0.066 },
-    { y: chin + h * 0.50, pts: boxRing(8, 0.062, 0.026, 0.8), oz: -0.060 },
+    { y: chin + h * 0.20, pts: boxRing(8, 0.038, 0.012, 0.9), oz: -0.088 },
+    { y: chin + h * 0.34, pts: boxRing(8, 0.052, 0.020, 0.8), oz: -0.084 },
+    { y: chin + h * 0.50, pts: boxRing(8, 0.058, 0.026, 0.8), oz: -0.078 },
   ]), M.hair, 'Hair_Nape'));
   return g;
 }
@@ -289,7 +364,13 @@ function buildCap(M) {
   g.name = 'Cap';
   const { headTop: top, headBottom: chin } = RIG;
   const h = top - chin;
-  const base = chin + h * 0.76;
+  // The band sits on the brow, not on the crown.
+  //
+  // At 0.76 of the head it perched on top like a bottle cap and left three
+  // quarters of the face showing, which is what made the head read as tiny on
+  // a long neck — the head was the right size all along, the cap was in the
+  // wrong place. A real cap covers from the brow up.
+  const base = chin + h * 0.555;
   const N = 10;
 
   // The crown, split at the vertical so the front panel and the rear panels
@@ -302,60 +383,75 @@ function buildCap(M) {
       const z = Math.sin(a);
       if (front ? z >= -0.001 : z <= 0.001) half.push(i);
     }
+    // A dome, not a cone. Ending the crown on a small ring drew it to a point
+    // and the cap looked like a party hat; the last ring has to stay wide and
+    // the whole thing has to stop lower than the skull it sits on.
     const sections = [
-      { y: base,          r: 0.096, sq: 1.02 },
-      { y: base + 0.030,  r: 0.094, sq: 1.02 },
-      { y: base + 0.056,  r: 0.076, sq: 1.00 },
-      { y: top + 0.014,   r: 0.028, sq: 1.00 },
+      { y: base,          r: 0.090, sq: 1.30 },
+      { y: base + 0.040,  r: 0.089, sq: 1.30 },
+      { y: base + 0.078,  r: 0.078, sq: 1.26 },
+      { y: top + 0.016,   r: 0.048, sq: 1.16 },
     ].map((s) => ({ y: s.y, pts: ring(N, s.r, s.sq).filter((_, i) => half.includes(i)) }));
     return loft(sections, { capBottom: false, capTop: false });
   };
   g.add(mesh(crown(true), M.capFront, 'Cap_Front'));
   g.add(mesh(crown(false), M.capRear, 'Cap_Rear'));
 
-  // Button on top, and the seam band round the base.
-  g.add(mesh(slab(0.020, 0.012, 0.020, 0, top + 0.020, -0.004), M.capRear, 'Cap_Button'));
+  // Button on top, and the strap and opening at the back — the one detail
+  // that says "baseball cap" rather than "hat", and the reference sheet shows
+  // it plainly in the back view.
+  g.add(mesh(slab(0.020, 0.012, 0.020, 0, top + 0.024, -0.006), M.capRear, 'Cap_Button'));
+  g.add(mesh(slab(0.058, 0.024, 0.012, 0, base + 0.022, -0.114), M.eye, 'Cap_Opening'));
+  g.add(mesh(slab(0.084, 0.013, 0.014, 0, base + 0.009, -0.112), M.capRear, 'Cap_Strap'));
 
-  // Brim: wider than it is long, curved down at the edges. Built as a loft of
-  // three chords rather than a flat plate so the curve is real geometry — a
-  // flat brim is the thing that makes a low-poly cap look like a visor.
-  const brim = [];
-  const STEPS = 9;
-  const pts = (front) => {
-    const row = [];
-    for (let i = 0; i <= STEPS; i++) {
-      const t = i / STEPS - 0.5;               // -0.5 .. 0.5 across
-      const w = 0.098;
-      const reach = front ? 0.118 : 0.020;
-      row.push([t * 2 * w, 0.070 + reach * (1 - t * t * 2.6)]);
-    }
-    return row;
-  };
-  const fr = pts(true), bk = pts(false);
-  const brimPts = fr.concat(bk.slice().reverse());
-  const droop = (i) => {
-    const t = (i % (STEPS + 1)) / STEPS - 0.5;
-    return -0.026 * (t * t * 4);
-  };
-  const brimTop = brimPts.map((p, i) => [p[0], p[1]]);
-  const lower = new THREE.BufferGeometry();
-  const bp = [];
-  for (let i = 0; i < brimPts.length; i++) {
-    const j = (i + 1) % brimPts.length;
-    const a = brimPts[i], b = brimPts[j];
-    const ya = base + 0.006 + droop(i), yb = base + 0.006 + droop(j);
-    // top face
-    bp.push(0, base + 0.010, 0.02, a[0], ya + 0.010, a[1], b[0], yb + 0.010, b[1]);
-    // bottom face
-    bp.push(0, base + 0.002, 0.02, b[0], yb + 0.002, b[1], a[0], ya + 0.002, a[1]);
-    // rim
-    bp.push(a[0], ya + 0.010, a[1], a[0], ya + 0.002, a[1], b[0], yb + 0.010, b[1]);
-    bp.push(b[0], yb + 0.010, b[1], a[0], ya + 0.002, a[1], b[0], yb + 0.002, b[1]);
+  // The brim.
+  //
+  // Rebuilt from an arc rather than from two straight chords. The chord
+  // version reached twenty centimetres off the front of the head — a brim is
+  // about six — and because both of its rows sat in front of the face it was
+  // a plate floating clear of the cap rather than something growing out of it.
+  //
+  // So: an inner arc that follows the crown's own base exactly, an outer arc
+  // pushed out from it along the same radius, and the strip between them. It
+  // cannot detach from the cap, because it starts on it.
+  const M_ = 12;
+  const capRX = 0.088, capRZ = 0.088 * 1.30;
+  const arc = [];
+  for (let i = 0; i <= M_; i++) {
+    // -95°..95°, so the brim wraps a little past the sides of the head.
+    const phi = (-1 + (2 * i) / M_) * 1.66;
+    const sn = Math.sin(phi), cs = Math.cos(phi);
+    const inner = [capRX * sn, capRZ * cs];
+    // Longest dead ahead and shortening round the sides, which is the shape of
+    // every brim ever made.
+    const reach = 0.062 * Math.pow(Math.max(0, cs), 0.55);
+    const outer = [inner[0] * (1 + reach / capRX * 0.55), inner[1] + reach];
+    // Droops at the tip and further at the corners.
+    const drop = -0.013 - 0.020 * (1 - Math.max(0, cs));
+    arc.push({ inner, outer, drop });
   }
-  lower.setAttribute('position', new THREE.Float32BufferAttribute(bp, 3));
-  lower.computeVertexNormals();
-  g.add(mesh(lower, M.capFront, 'Cap_Brim'));
-  void brimTop;
+
+  const TOP = base + 0.012, BOT = base + 0.003;
+  const bp = [];
+  const P = (p, q, r) => bp.push(p[0], p[1], p[2], q[0], q[1], q[2], r[0], r[1], r[2]);
+  const iT = (k) => [arc[k].inner[0], TOP, arc[k].inner[1]];
+  const iB = (k) => [arc[k].inner[0], BOT, arc[k].inner[1]];
+  const oT = (k) => [arc[k].outer[0], TOP + arc[k].drop, arc[k].outer[1]];
+  const oB = (k) => [arc[k].outer[0], BOT + arc[k].drop, arc[k].outer[1]];
+
+  for (let k = 0; k < M_; k++) {
+    P(iT(k), oT(k), iT(k + 1));  P(iT(k + 1), oT(k), oT(k + 1));   // upper face
+    P(iB(k), iB(k + 1), oB(k));  P(iB(k + 1), oB(k + 1), oB(k));   // under side
+    P(oT(k), oB(k), oT(k + 1));  P(oT(k + 1), oB(k), oB(k + 1));   // outer rim
+  }
+  // Close the two ends.
+  P(iT(0), iB(0), oT(0));           P(oT(0), iB(0), oB(0));
+  P(iT(M_), oT(M_), iB(M_));        P(oT(M_), oB(M_), iB(M_));
+
+  const brim = new THREE.BufferGeometry();
+  brim.setAttribute('position', new THREE.Float32BufferAttribute(bp, 3));
+  brim.computeVertexNormals();
+  g.add(mesh(brim, M.capFront, 'Cap_Brim'));
 
   return g;
 }
@@ -366,51 +462,97 @@ function buildTorso(M) {
   const N = 12;
   const R = RIG;
 
-  // Neck
+  // Neck, leaning very slightly forward as a real one does.
+  //
+  // Thicker than it looks like it should be, and it ends *above* the chin so
+  // the join is hidden inside the jaw. Run it to the chin line and its taper
+  // becomes the bottom of the face, which is what gave the first version a
+  // long pointed jaw that belonged on a different character entirely.
   g.add(mesh(loft([
-    { y: R.neckBottom - 0.02, pts: ring(N, 0.054, 0.90) },
-    { y: R.neckTop, pts: ring(N, 0.046, 0.92) },
+    { y: R.neckBottom - 0.026, pts: ring(N, 0.062, 0.94) },
+    { y: R.neckTop + 0.028,    pts: ring(N, 0.055, 0.98), oz: 0.006 },
   ]), M.skin, 'Neck'));
 
-  // The shirt. Widest at the deltoids, in at the waist, out again over the
-  // hips — three changes of direction, which is the fewest that reads as a
-  // torso and not a bottle.
+  // The shirt.
+  //
+  // Widest at the deltoids, in at the waist, out again over the hips. The
+  // `oz` offsets are the posture: the chest carried a little forward of the
+  // hips and the small of the back tucked in behind them. Without them the
+  // side view is a tube with a head on it, and no amount of front-view
+  // shaping rescues that — a standing figure is read from its profile.
   g.add(mesh(loft([
-    { y: R.hip - 0.052,   pts: ring(N, 0.148, 0.70) },
-    { y: R.waist,         pts: ring(N, 0.143, 0.70) },
-    { y: R.chest - 0.060, pts: ring(N, 0.152, 0.72) },
-    { y: R.chest + 0.040, pts: ring(N, 0.171, 0.74) },
-    { y: R.shoulder,      pts: ring(N, 0.176, 0.74) },
-    { y: R.shoulder + 0.034, pts: ring(N, 0.150, 0.76) },
+    { y: R.hip - 0.056,      pts: ring(N, 0.150, 0.70), oz: -0.004 },
+    { y: R.waist,            pts: ring(N, 0.142, 0.70), oz: -0.008 },
+    { y: R.chest - 0.070,    pts: ring(N, 0.153, 0.73), oz: -0.002 },
+    { y: R.chest + 0.030,    pts: ring(N, 0.172, 0.75), oz: 0.008 },
+    { y: R.shoulder - 0.020, pts: ring(N, 0.177, 0.75), oz: 0.006 },
+    { y: R.shoulder + 0.034, pts: ring(N, 0.148, 0.76), oz: 0.002 },
   ]), M.shirt, 'Shirt'));
 
-  // Shoulder caps, so the sleeve does not start at a hard corner.
-  for (const s of [-1, 1]) {
+  // Shoulder blades. Two shallow rises on the back, which is all the back
+  // needs — the reference sheet's back view is otherwise a flat blue field.
+  for (const sd of [-1, 1]) {
     g.add(mesh(loft([
-      { y: R.shoulder - 0.096, pts: ring(8, 0.052, 1.0), ox: s * R.shoulderHalf * 0.96 },
-      { y: R.shoulder - 0.030, pts: ring(8, 0.060, 1.0), ox: s * R.shoulderHalf * 0.90 },
-      { y: R.shoulder + 0.026, pts: ring(8, 0.046, 1.0), ox: s * R.shoulderHalf * 0.72 },
-    ]), M.shirt, s < 0 ? 'Sleeve_L' : 'Sleeve_R'));
+      { y: R.chest - 0.030, pts: boxRing(6, 0.048, 0.014, 0.9),
+        ox: sd * 0.070, oz: -0.104 },
+      { y: R.chest + 0.056, pts: boxRing(6, 0.054, 0.018, 0.9),
+        ox: sd * 0.074, oz: -0.108 },
+    ], { capBottom: false, capTop: false }), M.shirt,
+      sd < 0 ? 'Shirt_BladeL' : 'Shirt_BladeR'));
   }
 
-  // Collar: a band standing up round the neck, open at the front.
-  const collar = loft([
-    { y: R.shoulder + 0.026, pts: ring(N, 0.070, 0.92) },
-    { y: R.shoulder + 0.058, pts: ring(N, 0.078, 0.94) },
+  // Sleeves, with a hem. The hem is a ring of slightly larger radius at the
+  // bottom, so the sleeve ends in an edge instead of dissolving into the arm.
+  for (const sd of [-1, 1]) {
+    g.add(mesh(loft([
+      { y: R.shoulder - 0.120, pts: ring(8, 0.054, 1.0), ox: sd * R.shoulderHalf * 1.00 },
+      { y: R.shoulder - 0.104, pts: ring(8, 0.058, 1.0), ox: sd * R.shoulderHalf * 0.98 },
+      { y: R.shoulder - 0.040, pts: ring(8, 0.061, 1.0), ox: sd * R.shoulderHalf * 0.90 },
+      { y: R.shoulder + 0.026, pts: ring(8, 0.046, 1.0), ox: sd * R.shoulderHalf * 0.72 },
+    ]), M.shirt, sd < 0 ? 'Sleeve_L' : 'Sleeve_R'));
+  }
+
+  // Collar: a stand round the back of the neck and two points falling over
+  // the chest. A polo collar is not a band — the points are the whole shape
+  // of it, and a band is what a crew neck looks like.
+  const stand = loft([
+    { y: R.shoulder + 0.024, pts: ring(N, 0.070, 0.92), oz: -0.004 },
+    { y: R.shoulder + 0.062, pts: ring(N, 0.079, 0.94), oz: -0.008 },
   ], { capBottom: false, capTop: false });
-  g.add(mesh(collar, M.shirtTrim, 'Collar'));
-  // Placket
-  g.add(mesh(slab(0.030, 0.086, 0.012, 0, R.shoulder - 0.018, 0.122), M.shirtTrim, 'Placket'));
+  g.add(mesh(stand, M.shirtTrim, 'Collar_Stand'));
 
-  // Crest, left chest. Small enough to be a badge and no smaller.
-  g.add(mesh(slab(0.030, 0.036, 0.008, -0.062, R.chest + 0.012, 0.124), M.crest, 'Crest'));
+  for (const sd of [-1, 1]) {
+    const pt = plate([
+      [0, 0.052], [sd * 0.052, 0.044], [sd * 0.040, -0.044], [0, -0.030],
+    ], 0.010, sd * 0.030, R.shoulder + 0.010, 0.070,
+      [0.42, sd * 0.30, 0]);
+    g.add(mesh(pt, M.shirtTrim, sd < 0 ? 'Collar_PointL' : 'Collar_PointR'));
+  }
 
-  // Belt and buckle
+  // Placket and two buttons.
+  g.add(mesh(slab(0.028, 0.092, 0.012, 0, R.shoulder - 0.028, 0.120), M.shirtTrim, 'Placket'));
+  for (const dy of [0.014, -0.030]) {
+    g.add(mesh(slab(0.011, 0.011, 0.006, 0, R.shoulder - 0.028 + dy, 0.128),
+      M.buckle, 'Placket_Button'));
+  }
+
+  // Crest: a shield, not a rectangle. Six points is enough for a heraldic
+  // outline and a rectangle is not a badge.
+  g.add(mesh(plate([
+    [-0.016, 0.020], [0.016, 0.020], [0.016, -0.002],
+    [0.008, -0.018], [0, -0.024], [-0.008, -0.018], [-0.016, -0.002],
+  ], 0.007, -0.064, R.chest + 0.014, 0.126), M.crest, 'Crest'));
+
+  // Belt, buckle and loops.
   g.add(mesh(loft([
-    { y: R.waist - 0.030, pts: ring(N, 0.146, 0.70) },
-    { y: R.waist + 0.014, pts: ring(N, 0.147, 0.70) },
+    { y: R.waist - 0.032, pts: ring(N, 0.147, 0.70), oz: -0.008 },
+    { y: R.waist + 0.014, pts: ring(N, 0.148, 0.70), oz: -0.008 },
   ], { capBottom: false, capTop: false }), M.belt, 'Belt'));
-  g.add(mesh(slab(0.052, 0.038, 0.016, 0, R.waist - 0.008, 0.106), M.buckle, 'Buckle'));
+  g.add(mesh(slab(0.050, 0.036, 0.014, 0, R.waist - 0.009, 0.098), M.buckle, 'Buckle'));
+  for (const lx of [-0.092, -0.030, 0.030, 0.092]) {
+    g.add(mesh(slab(0.013, 0.054, 0.010, lx, R.waist - 0.009, 0.094 - Math.abs(lx) * 0.36),
+      M.chino, 'Belt_Loop'));
+  }
 
   return g;
 }
@@ -420,6 +562,7 @@ function buildArm(M, side) {
   g.name = side < 0 ? 'Arm_L' : 'Arm_R';
   const R = RIG;
   const N = 8;
+  const tag = side < 0 ? 'L' : 'R';
 
   // The A-pose. Twelve degrees out from vertical: enough that the armpit is
   // not a pinched crease, little enough that the silhouette is still a
@@ -427,29 +570,77 @@ function buildArm(M, side) {
   const lean = 0.21;
   const sx = (y) => side * (R.shoulderHalf * 0.86 + (R.shoulder - y) * Math.tan(lean));
 
+  // Elbow slightly wider than the sections either side of it, so the arm has
+  // a joint in it rather than being a smooth taper from shoulder to wrist.
   const arm = loft([
-    { y: R.wrist,           pts: ring(N, 0.030, 0.94), ox: sx(R.wrist) },
-    { y: R.elbow - 0.070,   pts: ring(N, 0.034, 0.94), ox: sx(R.elbow - 0.070) },
-    { y: R.elbow,           pts: ring(N, 0.039, 0.96), ox: sx(R.elbow) },
-    { y: R.elbow + 0.090,   pts: ring(N, 0.045, 0.98), ox: sx(R.elbow + 0.090) },
-    { y: R.shoulder - 0.096, pts: ring(N, 0.050, 1.00), ox: sx(R.shoulder - 0.096) },
+    { y: R.wrist,            pts: ring(N, 0.030, 0.94), ox: sx(R.wrist) },
+    { y: R.elbow - 0.076,    pts: ring(N, 0.033, 0.94), ox: sx(R.elbow - 0.076) },
+    { y: R.elbow - 0.012,    pts: ring(N, 0.040, 0.96), ox: sx(R.elbow - 0.012) },
+    { y: R.elbow + 0.024,    pts: ring(N, 0.038, 0.96), ox: sx(R.elbow + 0.024) },
+    { y: R.elbow + 0.100,    pts: ring(N, 0.046, 0.98), ox: sx(R.elbow + 0.100) },
+    { y: R.shoulder - 0.100, pts: ring(N, 0.051, 1.00), ox: sx(R.shoulder - 0.100) },
   ]);
-  g.add(mesh(arm, M.skin, (side < 0 ? 'ArmL' : 'ArmR') + '_Skin'));
+  g.add(mesh(arm, M.skin, 'Arm' + tag + '_Skin'));
 
-  // Glove: a mitt with a thumb. Fingers are not modelled separately, because
-  // at this scale four cylinders read as noise and one closed form reads as a
-  // gloved hand — which is what a golf glove looks like anyway.
+  // The glove.
+  //
+  // Fingers modelled, not implied. The mitt it replaces read as a boxing
+  // glove from any distance, and the reference is quite specific: a golf
+  // glove has fingers, they are slightly parted, and the seams between them
+  // are the only detail on an otherwise white shape. Four short prisms and a
+  // thumb cost about a hundred and fifty triangles a hand, which on a model
+  // this size is worth spending on the part people look at.
   const hx = sx(R.wrist);
-  const hand = loft([
-    { y: R.fingertip,          pts: boxRing(8, 0.030, 0.020, 0.75), ox: hx + side * 0.006 },
-    { y: R.fingertip + 0.048,  pts: boxRing(8, 0.036, 0.024, 0.6),  ox: hx + side * 0.004 },
-    { y: R.wrist - 0.014,      pts: boxRing(8, 0.036, 0.026, 0.55), ox: hx },
-    { y: R.wrist + 0.026,      pts: boxRing(8, 0.031, 0.023, 0.6),  ox: hx },
-  ]);
-  g.add(mesh(hand, M.glove, (side < 0 ? 'GloveL' : 'GloveR')));
-  g.add(mesh(slab(0.018, 0.046, 0.024,
-    hx - side * 0.030, R.fingertip + 0.062, 0.006, [0, 0, side * 0.30]),
-    M.glove, (side < 0 ? 'GloveL' : 'GloveR') + '_Thumb'));
+  const palmTop = R.wrist + 0.020;
+  const knuckle = R.fingertip + 0.052;
+
+  // SHORT AND FAT, NOT LONG AND THIN.
+  //
+  // The first attempt gave each finger its true length measured from the
+  // knuckle, and the hand came out as a broom: four pale spikes hanging off a
+  // plate. Two things were wrong. Half a finger's length is inside the palm on
+  // a real hand, so only the part past the knuckles should be modelled — and a
+  // gloved finger is nearly as thick as it is wide, where these were slats.
+  //
+  // They are also built touching rather than splayed. Gaps between the fingers
+  // of a relaxed hand are almost closed, and at this scale a visible gap is a
+  // hole straight through the hand.
+  g.add(mesh(loft([
+    { y: knuckle,         pts: boxRing(8, 0.038, 0.026, 0.55), ox: hx },
+    { y: R.wrist - 0.020, pts: boxRing(8, 0.039, 0.029, 0.5),  ox: hx },
+    { y: palmTop,         pts: boxRing(8, 0.032, 0.025, 0.6),  ox: hx },
+  ]), M.glove, 'Glove' + tag + '_Palm'));
+
+  const fingers = [
+    { off: -0.0255, len: 0.030, r: 0.0125 },
+    { off: -0.0085, len: 0.034, r: 0.0130 },
+    { off: 0.0085,  len: 0.031, r: 0.0128 },
+    { off: 0.0255,  len: 0.024, r: 0.0115 },
+  ];
+  fingers.forEach((fg, i) => {
+    const fx = hx + side * fg.off;
+    const tip = knuckle - fg.len;
+    g.add(mesh(loft([
+      { y: tip,              pts: boxRing(6, fg.r * 0.88, 0.021, 0.75), ox: fx },
+      { y: knuckle + 0.010,  pts: boxRing(6, fg.r, 0.025, 0.65), ox: fx },
+    ]), M.glove, 'Glove' + tag + '_Finger' + (i + 1)));
+  });
+
+  // Thumb, off the side of the palm and angled forward.
+  g.add(mesh(loft([
+    { y: knuckle + 0.018, pts: boxRing(6, 0.013, 0.016, 0.85),
+      ox: hx - side * 0.044, oz: 0.018 },
+    { y: knuckle + 0.048, pts: boxRing(6, 0.015, 0.020, 0.8),
+      ox: hx - side * 0.036, oz: 0.010 },
+    { y: R.wrist - 0.016, pts: boxRing(6, 0.016, 0.023, 0.75),
+      ox: hx - side * 0.022, oz: 0.002 },
+  ]), M.glove, 'Glove' + tag + '_Thumb'));
+
+  // The cuff, closing the glove at the wrist.
+  g.add(mesh(loft([
+    { y: R.wrist + 0.014, pts: boxRing(8, 0.033, 0.025, 0.6), ox: hx },
+    { y: R.wrist + 0.034, pts: boxRing(8, 0.031, 0.023, 0.65), ox: hx },
+  ], { capBottom: false }), M.glove, 'Glove' + tag + '_Cuff'));
 
   return g;
 }
@@ -460,23 +651,39 @@ function buildLeg(M, side) {
   const R = RIG;
   const N = 8;
   const cx = side * R.legHalf;
+  const tag = side < 0 ? 'L' : 'R';
 
   // Straight-cut chinos: the taper from thigh to ankle is slight and the
   // ankle opening stays wide. A leg that narrows to the ankle is a jean.
+  //
+  // The break is the last two sections. Trousers do not stop level above a
+  // shoe — the front of the hem catches on the laces and rides up while the
+  // back falls to the heel, and that little diagonal is the difference
+  // between trousers and a pair of tubes.
   g.add(mesh(loft([
-    { y: R.ankle - 0.004, pts: ring(N, 0.052, 0.90), ox: cx },
-    { y: R.knee - 0.120,  pts: ring(N, 0.056, 0.92), ox: cx },
-    { y: R.knee,          pts: ring(N, 0.062, 0.94), ox: cx },
-    { y: R.knee + 0.140,  pts: ring(N, 0.073, 0.94), ox: cx * 1.02 },
-    { y: R.crotch,        pts: ring(N, 0.083, 0.92), ox: cx * 1.04 },
-    { y: R.hip,           pts: ring(N, 0.092, 0.86), ox: cx * 0.92 },
-  ]), M.chino, (side < 0 ? 'LegL' : 'LegR') + '_Chino'));
+    { y: R.ankle + 0.024, pts: ring(N, 0.054, 0.90), ox: cx, oz: -0.010 },
+    { y: R.ankle + 0.052, pts: ring(N, 0.055, 0.90), ox: cx, oz: -0.004 },
+    { y: R.knee - 0.120,  pts: ring(N, 0.057, 0.92), ox: cx },
+    { y: R.knee - 0.020,  pts: ring(N, 0.064, 0.94), ox: cx, oz: 0.006 },
+    { y: R.knee + 0.030,  pts: ring(N, 0.062, 0.94), ox: cx, oz: 0.002 },
+    { y: R.knee + 0.150,  pts: ring(N, 0.074, 0.94), ox: cx * 1.02 },
+    { y: R.crotch,        pts: ring(N, 0.084, 0.92), ox: cx * 1.04, oz: -0.004 },
+    { y: R.hip,           pts: ring(N, 0.093, 0.86), ox: cx * 0.92, oz: -0.006 },
+  ]), M.chino, 'Leg' + tag + '_Chino'));
 
-  // Turn-up at the hem.
+  // The turn-up, cut on the same diagonal as the hem above it.
   g.add(mesh(loft([
-    { y: R.ankle - 0.006, pts: ring(N, 0.055, 0.90), ox: cx },
-    { y: R.ankle + 0.030, pts: ring(N, 0.056, 0.90), ox: cx },
-  ], { capBottom: false, capTop: false }), M.chino, (side < 0 ? 'LegL' : 'LegR') + '_Cuff'));
+    { y: R.ankle + 0.018, pts: ring(N, 0.057, 0.90), ox: cx, oz: -0.012 },
+    { y: R.ankle + 0.048, pts: ring(N, 0.058, 0.90), ox: cx, oz: -0.006 },
+  ], { capBottom: false, capTop: false }), M.chino, 'Leg' + tag + '_Cuff'));
+
+  // A crease down the front of each leg. One flat plane catching the light a
+  // shade differently is all a pressed trouser is.
+  g.add(mesh(loft([
+    { y: R.ankle + 0.060, pts: boxRing(6, 0.010, 0.006, 0.9), ox: cx, oz: 0.048 },
+    { y: R.knee + 0.040,  pts: boxRing(6, 0.012, 0.007, 0.9), ox: cx, oz: 0.058 },
+    { y: R.crotch - 0.020, pts: boxRing(6, 0.012, 0.007, 0.9), ox: cx * 1.02, oz: 0.074 },
+  ], { capBottom: false, capTop: false }), M.chino, 'Leg' + tag + '_Crease'));
 
   return g;
 }
