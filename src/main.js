@@ -14,7 +14,7 @@ import {
   HOLE_POS, TEE, PAR, HOLE_LENGTH, HOLE, setHole, POND, CREEK, OCEAN,
 } from './course.js';
 import { createTerrain, createWater, createOcean, createCreek, makeToonRamp, makeGroundRamp } from './terrain.js';
-import { createSky, createLights, createClouds, createBackdrop, FOG_COLOR, timeOfDay, setTimeOfDay } from './scenery.js';
+import { createSky, createLights, createClouds, createBackdrop, FOG_COLOR, timeOfDay, setTimeOfDay, TIMES } from './scenery.js';
 import {
   createTrees, createGrass, createClubhouse, createFlag, createTeeMarkers, createBridge,
   createSeaStacks, createLavaRocks,
@@ -31,6 +31,7 @@ import { Audio } from './audio.js';
 import { Hud, scoreName } from './hud.js';
 import { createKitControls } from './kit.js';
 import { createMenu } from './menu.js';
+import { createAdminMenu } from './admin.js';
 import { Match } from './match.js';
 import { COURSES, COURSE, HOLES, TOTAL_PAR, setCourse } from './courses.js';
 
@@ -1049,6 +1050,27 @@ function boot() {
     course: meta?.course ?? COURSES[0].id,
     time: meta?.time ?? 'day',
   });
+  // The mod menu. Built at boot rather than on demand so its key listener is
+  // live from the first frame — it is the only way in, and one that only works
+  // after something else has happened is not a way in.
+  createAdminMenu({
+    holes: () => HOLES,
+    courseName: () => COURSE.name,
+    current: () => game.holeIndex,
+    playing: () => started && !menu?.visible,
+    goHole: (i) => { hud.hideCard(); loadHole(i); },
+    times: () => TIMES,
+    time: () => timeOfDay().key,
+    // Rebuilds the world, which is the only way the sun can move: the sky, the
+    // fog and the light are all baked from it.
+    setTime: (k) => {
+      setTimeOfDay(k);
+      disposeLights();
+      hud.hideCard();
+      loadHole(game.holeIndex);
+    },
+  });
+
   hud.hideLoader();
 }
 

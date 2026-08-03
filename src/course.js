@@ -139,6 +139,31 @@ export function setHole(def) {
     return inland > b.rx + 18;
   }).map((b, i) => {
     const p = resolve(b.at, b.off);
+
+    // No bunker may reach the hole.
+    //
+    // Two of the par threes had the cup in sand, and neither was obviously
+    // wrong in the definition — a bunker twenty yards past a fifteen-yard
+    // green sounds like a back bunker, but its outline is an ellipse with
+    // harmonics that push it out to about 1.2 of its nominal radius, and that
+    // was enough to swallow the pin. Catching it here rather than by hand in
+    // the hole data means it cannot come back the next time a green moves.
+    //
+    // Pushed clear rather than deleted, because a greenside bunker that is
+    // slightly too close is still a greenside bunker and the author wanted one
+    // there. The cup sits within about three yards of the green's centre, so
+    // clearing the centre by the bunker's furthest reach plus that margin
+    // clears the cup.
+    const reach = 1.25 * Math.max(b.rx, b.rz) + 6;
+    let dx = p.x - GREEN.x, dz = p.z - GREEN.z;
+    const d = Math.hypot(dx, dz);
+    if (d < reach) {
+      if (d < 0.001) { dx = 1; dz = 0; }
+      else { dx /= d; dz /= d; }
+      p.x = GREEN.x + dx * reach;
+      p.z = GREEN.z + dz * reach;
+    }
+
     // Strong: bunkers are the most irregular thing on a golf course.
     return {
       x: p.x, z: p.z, rx: b.rx, rz: b.rz, rot: b.rot ?? 0,

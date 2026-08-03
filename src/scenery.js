@@ -118,6 +118,10 @@ export const TIMES = {
   },
 };
 
+// Each entry carries its own key, so anything holding the active preset can
+// say which one it is without searching the table for itself.
+for (const [k, v] of Object.entries(TIMES)) v.key = k;
+
 let current = TIMES.day;
 
 /** The active time of day. Read by everything that needs the sun. */
