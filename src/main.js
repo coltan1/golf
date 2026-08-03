@@ -774,20 +774,29 @@ function setupMatch() {
     /* Under the menu (60) and under the loader (50): this is a pause screen,
        and both of those replace the game outright. */
     #opts{position:fixed;inset:0;z-index:45;display:none;place-items:center;
-      background:rgba(20,45,60,.34);backdrop-filter:blur(6px);
-      -webkit-backdrop-filter:blur(6px)}
+      background:rgba(24,16,8,.52);backdrop-filter:blur(5px);
+      -webkit-backdrop-filter:blur(5px)}
     #opts.open{display:grid}
-    #optsCard{width:min(320px,calc(100vw - 40px));padding:20px;border-radius:22px;
-      background:rgba(255,255,255,.86);border:1px solid rgba(255,255,255,.9);
-      box-shadow:0 20px 50px rgba(20,60,80,.28);text-align:center}
-    #optsCard h3{margin:0 0 4px;font-size:20px;font-weight:800;letter-spacing:-.3px}
-    #optsCard p{margin:0 0 16px;font-size:12.5px;font-weight:700;opacity:.5}
-    #optsCard button{width:100%;margin-top:9px;border:none;font:inherit;font-weight:800;
-      font-size:14.5px;padding:13px 18px;border-radius:14px;cursor:pointer;
-      color:#fff;background:linear-gradient(180deg,#63c46f,#48ab5b)}
-    #optsCard button.ghost{background:rgba(255,255,255,.9);color:#26424f;
-      border:1px solid rgba(40,70,90,.16)}
-    #optsCard button:active{transform:scale(.98)}
+    #optsCard{width:min(330px,calc(100vw - 40px));padding:22px;border-radius:22px;
+      background:linear-gradient(180deg,#fbf1d9,#ecd9b0);
+      border:5px solid var(--wood);text-align:center;color:var(--ink);
+      box-shadow:0 0 0 3px var(--ink),0 18px 44px rgba(0,0,0,.55),
+                 inset 0 3px 0 rgba(255,255,255,.6)}
+    #optsCard h3{margin:0 0 10px;font-size:21px;font-weight:900;letter-spacing:.6px;
+      text-transform:uppercase;color:#fff;text-shadow:0 3px 0 rgba(0,0,0,.32);
+      background:linear-gradient(180deg,#8fd05c,#4f9330);
+      border:3px solid var(--ink);border-radius:12px;padding:7px 20px;display:inline-block;
+      box-shadow:0 4px 0 var(--green-lip),inset 0 2px 0 rgba(255,255,255,.35)}
+    #optsCard p{margin:0 0 16px;font-size:12.5px;font-weight:800;opacity:.6}
+    #optsCard button{width:100%;margin-top:11px;font:inherit;font-weight:900;
+      font-size:15px;padding:14px 18px;border-radius:15px;cursor:pointer;
+      text-transform:uppercase;letter-spacing:.8px;color:#fff;
+      border:3px solid var(--ink);text-shadow:0 2px 0 rgba(0,0,0,.3);
+      background:linear-gradient(180deg,#9ad966,var(--green-d));
+      box-shadow:0 5px 0 var(--green-lip),inset 0 2px 0 rgba(255,255,255,.4)}
+    #optsCard button.ghost{background:linear-gradient(180deg,#e3945f,var(--red-d));
+      box-shadow:0 5px 0 var(--red-lip),inset 0 2px 0 rgba(255,255,255,.35)}
+    #optsCard button:active{transform:translateY(4px);box-shadow:0 1px 0 rgba(0,0,0,.35)}
   `;
   document.head.appendChild(style);
 

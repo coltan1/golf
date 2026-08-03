@@ -193,6 +193,113 @@
     #power{width:62px;height:270px}
     #powerLabel{width:62px;transform:translateY(-180px)}
   }
+
+/* =====================================================================
+   WOODEN GUI SKIN
+   ---------------------------------------------------------------------
+   One override sheet rather than edits scattered through the rules above,
+   so the whole look can be read — and changed — in one place.
+
+   Three ideas carry it: every surface is either carved wood or a cream
+   board pinned to it; every button is a solid slab with a hard dark
+   outline and a lip underneath that it presses into; and every piece of
+   text is heavy, upper case, and outlined so it survives being drawn on
+   top of a photograph of a golf course.
+   ===================================================================== */
+:root{
+  --ink:#3d2716;
+  --ink-soft:#6b4a2c;
+  --board:#f7e7c6;
+  --board-2:#eed7ad;
+  --wood:#8a5a34;
+  --wood-dark:#5a3a20;
+  --blue:#4fbdea; --blue-d:#2b86b4; --blue-lip:#1d6389;
+  --green:#7cc04a; --green-d:#4f9330; --green-lip:#3a6f22;
+  --orange:#f6a824; --orange-d:#cf7c0d; --orange-lip:#9d5c07;
+  --red:#e0704a; --red-d:#b34627; --red-lip:#8a331a;
+  --gold:#ffd451;
+}
+
+body{ color:var(--ink); }
+
+/* Text that reads on anything. */
+.pill,#cardTitle,#cardSub,#btnAgain,#loaderTitle,#hint,#shot{
+  font-weight:900;
+  letter-spacing:.3px;
+}
+
+/* ---------- the cream board, used everywhere a panel is needed ---------- */
+.pill{
+  background:linear-gradient(180deg,var(--board) 0%,var(--board-2) 100%);
+  border:3px solid var(--ink);
+  border-radius:14px;
+  box-shadow:0 4px 0 rgba(61,39,22,.45), 0 8px 18px rgba(0,0,0,.34),
+             inset 0 2px 0 rgba(255,255,255,.6);
+  backdrop-filter:none; -webkit-backdrop-filter:none;
+  color:var(--ink);
+  padding:8px 14px;
+  text-shadow:none;
+}
+.dim{opacity:.62}
+.sep{opacity:.35}
+
+#topLeft .pill:first-child{ background:linear-gradient(180deg,#8fd05c,#5da234); color:#fff;
+  text-shadow:0 2px 0 rgba(0,0,0,.32); border-color:var(--ink); }
+#topLeft .pill:first-child .dim{ color:#eaffd8; opacity:.8 }
+#topLeft .pill:first-child .sep{ color:#eaffd8; opacity:.5 }
+
+/* ---------- round wooden buttons in the corner ---------- */
+#btnSound,#btnOpts{
+  width:44px;height:44px;border-radius:12px;padding:0;
+  background:linear-gradient(180deg,var(--orange),var(--orange-d));
+  color:#fff;text-shadow:0 2px 0 rgba(0,0,0,.3);
+  box-shadow:0 4px 0 var(--orange-lip), 0 7px 14px rgba(0,0,0,.34),
+             inset 0 2px 0 rgba(255,255,255,.45);
+}
+#btnSound:active,#btnOpts:active{
+  transform:translateY(3px);
+  box-shadow:0 1px 0 var(--orange-lip), 0 3px 8px rgba(0,0,0,.3),
+             inset 0 2px 0 rgba(255,255,255,.4);
+}
+
+/* ---------- scoreboard ---------- */
+#scoreboard{padding:10px 14px 9px}
+.sbRow .sbName{opacity:.7;font-weight:800}
+.sbRow .sbScore{font-weight:900}
+
+/* ---------- the hint and the shot report ---------- */
+#hint,#shot{ background:linear-gradient(180deg,#4a3220,#33210f); color:#f6e6c8;
+  border-color:#20140a; box-shadow:0 4px 0 rgba(0,0,0,.4),0 8px 18px rgba(0,0,0,.35);
+  text-shadow:0 1px 0 rgba(0,0,0,.6); }
+
+/* ---------- the scorecard ---------- */
+#card{
+  background:linear-gradient(180deg,var(--board),var(--board-2));
+  border:5px solid var(--wood);
+  border-radius:22px;
+  box-shadow:0 0 0 3px var(--ink), 0 14px 34px rgba(0,0,0,.5),
+             inset 0 3px 0 rgba(255,255,255,.55);
+  color:var(--ink);
+}
+#cardTitle{ text-transform:uppercase; letter-spacing:.5px; }
+#btnAgain{
+  border:3px solid var(--ink);border-radius:14px;
+  background:linear-gradient(180deg,var(--green),var(--green-d));
+  color:#fff;text-transform:uppercase;letter-spacing:.6px;font-weight:900;
+  box-shadow:0 5px 0 var(--green-lip), 0 8px 16px rgba(0,0,0,.32),
+             inset 0 2px 0 rgba(255,255,255,.4);
+  text-shadow:0 2px 0 rgba(0,0,0,.3);
+}
+#btnAgain:active{ transform:translateY(4px);
+  box-shadow:0 1px 0 var(--green-lip), 0 3px 8px rgba(0,0,0,.3); }
+
+/* ---------- loader ---------- */
+#loader{ background:radial-gradient(120% 90% at 50% 20%,#4d3a22 0%,#2a1d10 70%,#180f07 100%); }
+#loaderTitle{ color:var(--board); text-transform:uppercase; letter-spacing:1px;
+  text-shadow:0 3px 0 rgba(0,0,0,.5); }
+#loaderSub{ color:#c9ab80; }
+#dots i{ background:var(--gold); }
+
 </style>
 
 <script type="importmap">

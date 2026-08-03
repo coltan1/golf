@@ -39,27 +39,38 @@ function styleTag() {
   const el = document.createElement('style');
   el.id = 'kitStyle';
   el.textContent = `
-  .kitRow{margin-bottom:14px}
-  .kitRow .kitLabel{font-size:11px; font-weight:800; opacity:.5; margin-bottom:7px; letter-spacing:.4px}
-  .kitSwatches{display:flex; flex-wrap:wrap; gap:8px; align-items:center}
+  .kitRow{margin-bottom:16px}
+  .kitRow .kitLabel{font-size:11px; font-weight:900; letter-spacing:1px;
+    opacity:.55; margin-bottom:8px; color:var(--ink)}
+  .kitSwatches{display:flex; flex-wrap:wrap; gap:9px; align-items:center}
   .kitSw{
-    width:28px; height:28px; border-radius:50%; cursor:pointer;
-    border:2px solid rgba(255,255,255,.75); box-shadow:0 1px 3px rgba(0,0,0,.25);
+    width:30px; height:30px; border-radius:9px; cursor:pointer;
+    border:3px solid var(--ink);
+    box-shadow:0 3px 0 rgba(61,39,22,.5), inset 0 2px 0 rgba(255,255,255,.35);
     transition:transform .12s ease;
   }
-  .kitSw:hover{transform:scale(1.14)}
-  .kitSw.on{border-color:#2b3a44; transform:scale(1.14)}
+  .kitSw:hover{transform:translateY(-1px)}
+  .kitSw.on{transform:translateY(-2px); box-shadow:0 5px 0 rgba(61,39,22,.55),
+    0 0 0 3px var(--gold), inset 0 2px 0 rgba(255,255,255,.35)}
+  .kitSw:active{transform:translateY(2px); box-shadow:0 1px 0 rgba(61,39,22,.5)}
   .kitSw input{opacity:0; width:0; height:0; position:absolute; pointer-events:none}
   .kitAny{display:grid; place-items:center; font-size:12px; background:
     conic-gradient(#e8433f,#ffd05c,#1f7a4d,#2f6fd0,#9b59b6,#e8433f)}
-  .kitChips{display:flex; flex-wrap:wrap; gap:6px}
+  .kitChips{display:flex; flex-wrap:wrap; gap:7px}
   .kitChip{
-    font-size:12.5px; font-weight:800; padding:7px 13px; border-radius:999px; cursor:pointer;
-    background:rgba(255,255,255,.6); border:1px solid rgba(40,70,90,.16); text-transform:capitalize;
+    font-size:12px; font-weight:900; padding:8px 14px; border-radius:11px; cursor:pointer;
+    text-transform:uppercase; letter-spacing:.4px; color:var(--ink);
+    background:linear-gradient(180deg,#fdf6e6,#ecd9b0);
+    border:3px solid var(--ink);
+    box-shadow:0 3px 0 rgba(61,39,22,.45), inset 0 2px 0 rgba(255,255,255,.6);
   }
-  .kitChip:hover{background:rgba(255,255,255,.85)}
-  .kitChip.on{background:#2b3a44; color:#fff; border-color:#2b3a44}
-  .kitSplit{border:0; border-top:1px solid rgba(40,70,90,.14); margin:16px 0}
+  .kitChip:active{transform:translateY(2px); box-shadow:0 1px 0 rgba(61,39,22,.45)}
+  .kitChip.on{
+    background:linear-gradient(180deg,#ffd970,var(--orange-d)); color:#fff;
+    text-shadow:0 2px 0 rgba(0,0,0,.28);
+    box-shadow:0 3px 0 var(--orange-lip), inset 0 2px 0 rgba(255,255,255,.45);
+  }
+  .kitSplit{border:0; border-top:3px dashed rgba(61,39,22,.28); margin:18px 0}
   `;
   document.head.appendChild(el);
 }

@@ -26,11 +26,27 @@ import { COURSES } from './courses.js';
 import { TIMES } from './scenery.js';
 
 const css = `
+/* -------------------------------------------------------------------------
+   The lobby, in wood.
+
+   Dark forest behind, cream boards pinned to it, and buttons that are solid
+   slabs with a hard outline and a lip underneath — press one and it sinks
+   into its own shadow. Every label is heavy and upper case, because at this
+   weight the type is part of the carpentry rather than something written on
+   it.
+   ------------------------------------------------------------------------- */
 #menu{
   position:fixed;inset:0;z-index:60;overflow:hidden;
-  background:linear-gradient(170deg,#bfe4f7 0%,#dff1f8 46%,#e9f5ec 100%);
+  /* Layered rather than an image: a warm pool of light at the top, deep
+     shade at the corners, and a slow vertical grain over the whole thing. */
+  background:
+    radial-gradient(120% 80% at 50% -10%, rgba(255,214,140,.30) 0%, rgba(0,0,0,0) 60%),
+    radial-gradient(90% 70% at 50% 110%, rgba(0,0,0,.55) 0%, rgba(0,0,0,0) 70%),
+    repeating-linear-gradient(97deg, rgba(0,0,0,.10) 0 3px, rgba(255,255,255,.02) 3px 9px),
+    linear-gradient(175deg,#4a3a1e 0%,#33451f 42%,#22301a 100%);
   transition:opacity .4s ease;
   font-variant-numeric:tabular-nums;
+  color:var(--ink);
 }
 #menu.hide{opacity:0;pointer-events:none}
 
@@ -42,108 +58,191 @@ const css = `
 .screen.on > *{animation:menuIn .34s cubic-bezier(.22,1,.36,1) both}
 @keyframes menuIn{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:none}}
 
-.sHead{display:flex;align-items:center;gap:12px;margin-bottom:20px;flex:none}
+/* ---------- headers ---------- */
+.sHead{display:flex;align-items:center;gap:14px;margin-bottom:20px;flex:none}
 .sBack{
-  width:38px;height:38px;flex:none;border:none;font:inherit;font-size:17px;font-weight:800;
-  border-radius:50%;cursor:pointer;color:#26424f;background:rgba(255,255,255,.72);
-  border:1px solid rgba(40,70,90,.14);display:grid;place-items:center;
+  width:46px;height:46px;flex:none;font:inherit;font-size:19px;font-weight:900;
+  border:3px solid var(--ink);border-radius:13px;cursor:pointer;color:#fff;
+  background:linear-gradient(180deg,var(--orange),var(--orange-d));
+  box-shadow:0 5px 0 var(--orange-lip),0 8px 16px rgba(0,0,0,.4),
+             inset 0 2px 0 rgba(255,255,255,.45);
+  text-shadow:0 2px 0 rgba(0,0,0,.3);
+  display:grid;place-items:center;
 }
-.sBack:active{transform:scale(.92)}
-.sTitle{font-size:27px;font-weight:800;letter-spacing:-.5px;margin:0}
-.sSub{font-size:12.5px;font-weight:700;opacity:.5;margin-top:2px}
+.sBack:active{transform:translateY(4px);box-shadow:0 1px 0 var(--orange-lip),0 3px 8px rgba(0,0,0,.35)}
+/* A hung sign rather than a line of text. */
+.sTitle{
+  font-size:24px;font-weight:900;letter-spacing:.6px;margin:0;text-transform:uppercase;
+  color:#fff;text-shadow:0 3px 0 rgba(0,0,0,.35);
+  background:linear-gradient(180deg,#8fd05c,#4f9330);
+  border:3px solid var(--ink);border-radius:12px;
+  padding:8px 26px;display:inline-block;
+  box-shadow:0 5px 0 var(--green-lip),0 8px 18px rgba(0,0,0,.4),
+             inset 0 2px 0 rgba(255,255,255,.35);
+}
+.sSub{font-size:12.5px;font-weight:800;color:#e2d0a6;opacity:.75;margin-top:7px;
+  text-shadow:0 1px 2px rgba(0,0,0,.6)}
 
 /* ---------- home ---------- */
 #home{align-items:center;justify-content:center;text-align:center}
-#homeTitle{font-size:44px;font-weight:800;letter-spacing:-1.2px;margin:0}
-#homeSub{font-size:13px;font-weight:700;opacity:.5;margin:2px 0 14px}
+#homeTitle{
+  font-size:52px;font-weight:900;letter-spacing:-.5px;margin:0;line-height:.95;
+  text-transform:uppercase;color:#fff;
+  text-shadow:0 4px 0 rgba(0,0,0,.45), 0 0 22px rgba(255,214,140,.35);
+}
+#homeSub{font-size:13px;font-weight:800;color:#e2d0a6;opacity:.72;margin:6px 0 16px;
+  text-shadow:0 1px 2px rgba(0,0,0,.6)}
+/* The board the golfer stands on: cream, framed in wood, outlined in ink. */
 #homeStage{
-  width:min(300px,72vw);height:min(340px,42vh);border-radius:26px;overflow:hidden;
-  background:linear-gradient(180deg,rgba(255,255,255,.55),rgba(255,255,255,.18));
-  border:1px solid rgba(255,255,255,.7);box-shadow:0 16px 40px rgba(25,70,95,.16);
-  flex:none;
+  width:min(300px,72vw);height:min(320px,40vh);border-radius:20px;overflow:hidden;
+  background:linear-gradient(180deg,#fbf1d9,#ecd9b0);
+  border:5px solid var(--wood);
+  box-shadow:0 0 0 3px var(--ink),0 14px 34px rgba(0,0,0,.55),
+             inset 0 3px 0 rgba(255,255,255,.6);
+  flex:none;position:relative;
 }
 #homeName{
-  width:min(300px,72vw);margin-top:14px;text-align:center;font:inherit;font-size:15px;
-  font-weight:800;padding:10px 12px;border-radius:999px;
-  border:1px solid rgba(40,70,90,.18);background:rgba(255,255,255,.72);color:#22333d;
+  width:min(300px,72vw);margin-top:16px;text-align:center;font:inherit;font-size:15px;
+  font-weight:900;padding:11px 12px;border-radius:13px;color:var(--ink);
+  border:3px solid var(--ink);
+  background:linear-gradient(180deg,#fbf1d9,#ecd9b0);
+  box-shadow:0 4px 0 rgba(61,39,22,.5),inset 0 2px 0 rgba(255,255,255,.6);
 }
-#homeName:focus{outline:2px solid rgba(70,150,110,.5);outline-offset:1px}
-#homeBtns{display:flex;gap:10px;margin-top:16px;flex-wrap:wrap;justify-content:center;
-  width:min(420px,88vw)}
-#homeBtns .bigBtn{flex:1 1 160px;margin:0}
+#homeName:focus{outline:none;border-color:var(--green-d)}
+#homeBtns{display:flex;gap:12px;margin-top:18px;flex-wrap:wrap;justify-content:center;
+  width:min(430px,90vw)}
+#homeBtns .bigBtn{flex:1 1 170px;margin:0}
 
 /* ---------- customise ---------- */
-#custBody{display:flex;gap:26px;flex:1;min-height:0}
+#custBody{display:flex;gap:24px;flex:1;min-height:0}
 #custStage{
-  /* Capped rather than stretched: the preview frames to fit, so a stage the
-     full height of a desktop window just pushes the golfer far away. */
-  flex:0 0 340px;border-radius:24px;overflow:hidden;align-self:flex-start;
-  height:min(560px,calc(100vh - 130px));min-height:320px;
-  background:linear-gradient(180deg,rgba(255,255,255,.55),rgba(255,255,255,.18));
-  border:1px solid rgba(255,255,255,.7);box-shadow:0 16px 40px rgba(25,70,95,.16);
+  flex:0 0 340px;border-radius:20px;overflow:hidden;align-self:flex-start;
+  height:min(560px,calc(100vh - 150px));min-height:320px;
+  background:linear-gradient(180deg,#fbf1d9,#ecd9b0);
+  border:5px solid var(--wood);
+  box-shadow:0 0 0 3px var(--ink),0 14px 34px rgba(0,0,0,.55),
+             inset 0 3px 0 rgba(255,255,255,.6);
 }
 #custOpts{
-  flex:1;min-width:0;overflow-y:auto;padding:18px 20px;border-radius:24px;
-  background:rgba(255,255,255,.62);border:1px solid rgba(255,255,255,.8);
-  box-shadow:0 16px 40px rgba(25,70,95,.14);
+  flex:1;min-width:0;overflow-y:auto;padding:20px 22px;border-radius:20px;
+  background:linear-gradient(180deg,#fbf1d9,#f0dcb6);
+  border:5px solid var(--wood);
+  box-shadow:0 0 0 3px var(--ink),0 14px 34px rgba(0,0,0,.5),
+             inset 0 3px 0 rgba(255,255,255,.55);
 }
 #previewWrap{width:100%;height:100%}
 #previewWrap canvas{width:100%;height:100%;display:block}
 
 /* ---------- shared bits ---------- */
-.mLabel{font-size:11px;font-weight:800;opacity:.5;letter-spacing:.4px;margin:18px 0 8px}
+.mLabel{
+  font-size:11.5px;font-weight:900;letter-spacing:1px;margin:20px 0 9px;
+  color:#e6d4aa;opacity:.85;text-shadow:0 1px 2px rgba(0,0,0,.7);
+}
 .mLabel:first-child{margin-top:0}
-.cards{display:flex;gap:10px;flex-wrap:wrap}
+.cards{display:flex;gap:12px;flex-wrap:wrap}
 .card{
   flex:1 1 260px;text-align:left;padding:14px 16px;border-radius:16px;cursor:pointer;
-  background:rgba(255,255,255,.62);border:1.5px solid rgba(40,70,90,.14);
+  background:linear-gradient(180deg,#fbf1d9,#eddcb6);
+  border:3px solid var(--ink);color:var(--ink);
+  box-shadow:0 5px 0 rgba(61,39,22,.45),0 8px 16px rgba(0,0,0,.32),
+             inset 0 2px 0 rgba(255,255,255,.6);
+  transition:transform .14s cubic-bezier(.22,1,.36,1);
 }
-.card.on{border-color:#2f7d55;background:rgba(47,125,85,.10)}
-.card b{display:block;font-size:15px;font-weight:800;margin-bottom:3px}
-.card span{font-size:12px;font-weight:600;opacity:.6;line-height:1.4;display:block}
-.chips{display:flex;gap:7px;flex-wrap:wrap}
+.card:active{transform:translateY(4px)}
+.card.on{
+  background:linear-gradient(180deg,#9ad966,#5da234);color:#fff;
+  box-shadow:0 5px 0 var(--green-lip),0 8px 18px rgba(0,0,0,.4),
+             inset 0 2px 0 rgba(255,255,255,.4);
+  text-shadow:0 2px 0 rgba(0,0,0,.28);
+}
+.card b{display:block;font-size:15px;font-weight:900;margin-bottom:3px;
+  text-transform:uppercase;letter-spacing:.3px}
+.card span{font-size:12px;font-weight:700;opacity:.72;line-height:1.4;display:block}
+
+.chips{display:flex;gap:9px;flex-wrap:wrap}
 .chip{
-  font-size:13px;font-weight:800;padding:9px 17px;border-radius:999px;cursor:pointer;
-  background:rgba(255,255,255,.62);border:1px solid rgba(40,70,90,.14);
+  font-size:13px;font-weight:900;padding:10px 20px;border-radius:12px;cursor:pointer;
+  text-transform:uppercase;letter-spacing:.4px;color:var(--ink);
+  background:linear-gradient(180deg,#fbf1d9,#eddcb6);
+  border:3px solid var(--ink);
+  box-shadow:0 4px 0 rgba(61,39,22,.45),inset 0 2px 0 rgba(255,255,255,.6);
 }
-.chip.on{background:#2b3a44;color:#fff;border-color:#2b3a44}
+.chip:active{transform:translateY(3px);box-shadow:0 1px 0 rgba(61,39,22,.45)}
+.chip.on{
+  background:linear-gradient(180deg,#ffd970,var(--orange-d));color:#fff;
+  text-shadow:0 2px 0 rgba(0,0,0,.28);
+  box-shadow:0 4px 0 var(--orange-lip),inset 0 2px 0 rgba(255,255,255,.45);
+}
 
+/* ---------- the slabs ---------- */
 .bigBtn{
-  width:100%;margin-top:20px;border:none;font:inherit;font-weight:800;font-size:15px;
-  color:#fff;background:linear-gradient(180deg,#63c46f,#48ab5b);
+  width:100%;margin-top:20px;font:inherit;font-weight:900;font-size:17px;
+  text-transform:uppercase;letter-spacing:1px;
+  color:#fff;text-shadow:0 3px 0 rgba(0,0,0,.32);
+  background:linear-gradient(180deg,#6fcdf2 0%,var(--blue) 48%,var(--blue-d) 100%);
+  border:3px solid var(--ink);
   padding:15px 20px;border-radius:16px;cursor:pointer;
-  box-shadow:0 10px 24px rgba(60,150,90,.34);
-  transition:transform .2s cubic-bezier(.22,1,.36,1);
+  box-shadow:0 6px 0 var(--blue-lip),0 10px 20px rgba(0,0,0,.4),
+             inset 0 2px 0 rgba(255,255,255,.45);
+  transition:transform .12s cubic-bezier(.22,1,.36,1),box-shadow .12s;
 }
-.bigBtn:hover{transform:translateY(-1px)}
-.bigBtn:active{transform:scale(.98)}
-.bigBtn.ghost{background:rgba(255,255,255,.72);color:#26424f;box-shadow:none;
-  border:1px solid rgba(40,70,90,.16);margin-top:10px}
+.bigBtn:hover{filter:brightness(1.06)}
+.bigBtn:active{transform:translateY(5px);
+  box-shadow:0 1px 0 var(--blue-lip),0 3px 8px rgba(0,0,0,.35),
+             inset 0 2px 0 rgba(255,255,255,.4)}
+/* Green is "go": start the round, open the lobby. */
+#btnSolo,#btnHost,#homeBtns [data-go="solo"]{
+  background:linear-gradient(180deg,#9ad966 0%,var(--green) 48%,var(--green-d) 100%);
+  box-shadow:0 6px 0 var(--green-lip),0 10px 20px rgba(0,0,0,.4),
+             inset 0 2px 0 rgba(255,255,255,.4);
+}
+#btnSolo:active,#btnHost:active,#homeBtns [data-go="solo"]:active{
+  box-shadow:0 1px 0 var(--green-lip),0 3px 8px rgba(0,0,0,.35)}
+/* The quieter one, in warm red. */
+.bigBtn.ghost{
+  background:linear-gradient(180deg,#e3945f 0%,var(--red) 48%,var(--red-d) 100%);
+  box-shadow:0 6px 0 var(--red-lip),0 10px 20px rgba(0,0,0,.4),
+             inset 0 2px 0 rgba(255,255,255,.35);
+  color:#fff;margin-top:12px;
+}
+.bigBtn.ghost:active{box-shadow:0 1px 0 var(--red-lip),0 3px 8px rgba(0,0,0,.35)}
 
-#lobbies{margin-top:4px;display:flex;flex-direction:column;gap:7px}
+/* ---------- lobbies ---------- */
+#lobbies{margin-top:4px;display:flex;flex-direction:column;gap:9px}
 .lobby{
   display:flex;align-items:center;justify-content:space-between;gap:12px;
-  padding:12px 15px;border-radius:14px;background:rgba(255,255,255,.65);
-  border:1px solid rgba(40,70,90,.12);
+  padding:12px 15px;border-radius:14px;color:var(--ink);
+  background:linear-gradient(180deg,#fbf1d9,#eddcb6);
+  border:3px solid var(--ink);
+  box-shadow:0 4px 0 rgba(61,39,22,.45),inset 0 2px 0 rgba(255,255,255,.6);
 }
-.lobby .who{font-size:14px;font-weight:800}
-.lobby .what{font-size:11.5px;font-weight:700;opacity:.55}
+.lobby .who{font-size:14px;font-weight:900;text-transform:uppercase;letter-spacing:.3px}
+.lobby .what{font-size:11.5px;font-weight:800;opacity:.62}
 .lobby button{
-  border:none;font:inherit;font-weight:800;font-size:13px;color:#fff;cursor:pointer;
-  background:#2f7d55;padding:9px 19px;border-radius:999px;
+  font:inherit;font-weight:900;font-size:13px;color:#fff;cursor:pointer;
+  text-transform:uppercase;letter-spacing:.5px;
+  background:linear-gradient(180deg,#9ad966,var(--green-d));
+  border:3px solid var(--ink);padding:9px 20px;border-radius:12px;
+  text-shadow:0 2px 0 rgba(0,0,0,.28);
+  box-shadow:0 4px 0 var(--green-lip),inset 0 2px 0 rgba(255,255,255,.4);
 }
-#lobbyNone{font-size:13px;font-weight:700;opacity:.45;padding:12px 2px}
-#mpNote{font-size:12px;font-weight:700;opacity:.5;margin-top:14px;line-height:1.5}
-#mpLive{font-size:13px;font-weight:800;color:#2f7d55;margin-top:12px;min-height:17px}
+.lobby button:active{transform:translateY(3px);box-shadow:0 1px 0 var(--green-lip)}
+#lobbyNone{font-size:13px;font-weight:800;color:#e6d4aa;opacity:.6;padding:12px 2px;
+  text-shadow:0 1px 2px rgba(0,0,0,.6)}
+#mpNote{font-size:12px;font-weight:700;color:#e2d0a6;opacity:.62;margin-top:14px;
+  line-height:1.5;text-shadow:0 1px 2px rgba(0,0,0,.6)}
+#mpLive{font-size:13.5px;font-weight:900;color:#ffe08a;margin-top:12px;min-height:18px;
+  text-shadow:0 2px 0 rgba(0,0,0,.45)}
 
 @media (max-width:820px){
   .screen{padding:16px 16px 22px}
-  .sTitle{font-size:23px}
-  #homeTitle{font-size:34px}
+  .sTitle{font-size:19px;padding:7px 18px}
+  #homeTitle{font-size:38px}
   #custBody{flex-direction:column;gap:14px}
-  #custStage{flex:none;height:34vh;min-height:200px}
+  #custStage{flex:none;height:32vh;min-height:200px}
   #custOpts{flex:none;overflow:visible;padding:16px}
   .card{flex:1 1 100%}
+  .bigBtn{padding:14px 18px;font-size:16px}
 }
 `;
 
