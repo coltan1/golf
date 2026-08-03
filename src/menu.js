@@ -25,6 +25,16 @@ import { makeToonRamp } from './terrain.js';
 import { COURSES } from './courses.js';
 import { TIMES } from './scenery.js';
 
+/**
+ * Bump this when something ships.
+ *
+ * Hand-written rather than read from a package.json or stamped by a build,
+ * because there is neither: the game is a folder of ES modules served as they
+ * are. One constant that a person edits is honest about that; a number pulled
+ * from somewhere that does not exist would not be.
+ */
+const VERSION = 'v0.9';
+
 const css = `
 /* -------------------------------------------------------------------------
    The lobby, in wood.
@@ -49,6 +59,14 @@ const css = `
   color:var(--ink);
 }
 #menu.hide{opacity:0;pointer-events:none}
+/* Faint on purpose. It is for whoever is reporting a bug, not for the player
+   choosing a round, so it has to be legible when looked for and invisible
+   when not. */
+#menuVer{
+  position:absolute;left:14px;bottom:12px;z-index:1;pointer-events:none;
+  font-size:11.5px;font-weight:800;letter-spacing:.6px;
+  color:#fff;opacity:.16;text-shadow:0 1px 2px rgba(0,0,0,.5);
+}
 
 .screen{
   position:absolute;inset:0;display:none;flex-direction:column;
@@ -309,6 +327,12 @@ export function createMenu({ getLook, getName, buildKit, onStart, onHost, onQuic
       <div id="mpNote">Whoever creates the lobby picks the course and the light —
         joining adopts theirs, so you both play the same round.</div>
     </div>`;
+  // Outside the screens, so it stays put while they come and go.
+  const ver = document.createElement('div');
+  ver.id = 'menuVer';
+  ver.textContent = VERSION;
+  root.appendChild(ver);
+
   document.body.appendChild(root);
 
   const $ = (id) => root.querySelector('#' + id);
