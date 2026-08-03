@@ -1,0 +1,216 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Low-poly golfer — model sheet</title>
+<style>
+  *{box-sizing:border-box}
+  html,body{margin:0;height:100%;background:#f4f5f7;color:#22282e;
+    font-family:"Nunito",ui-rounded,-apple-system,"Segoe UI",system-ui,sans-serif}
+  #wrap{display:flex;flex-direction:column;height:100%}
+  header{display:flex;align-items:center;gap:16px;flex-wrap:wrap;
+    padding:14px 20px;border-bottom:1px solid #dfe3e8;background:#fff}
+  h1{font-size:17px;font-weight:800;margin:0;letter-spacing:-.2px}
+  #stats{font-size:12.5px;font-weight:700;color:#5a6672;font-variant-numeric:tabular-nums}
+  .spacer{flex:1}
+  button{font:inherit;font-size:13.5px;font-weight:800;cursor:pointer;
+    padding:10px 18px;border-radius:10px;border:1px solid #2f6fd0;
+    background:#3f82e6;color:#fff}
+  button.ghost{background:#fff;color:#2f4a63;border-color:#c8d0d8}
+  button:active{transform:translateY(1px)}
+  #sheet{flex:1;position:relative;min-height:0}
+  canvas{display:block;width:100%;height:100%}
+  #labels{position:absolute;inset:0;pointer-events:none}
+  .lab{position:absolute;font-size:12px;font-weight:800;letter-spacing:1.1px;
+    color:#3b4652;text-transform:uppercase}
+  footer{padding:10px 20px;border-top:1px solid #dfe3e8;background:#fff;
+    font-size:12px;font-weight:600;color:#69747f;line-height:1.5}
+</style>
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://unpkg.com/three@0.169.0/build/three.module.js",
+    "three/addons/": "https://unpkg.com/three@0.169.0/examples/jsm/"
+  }
+}
+</script>
+</head>
+<body>
+<div id="wrap">
+  <header>
+    <h1>Low-poly golfer — model sheet</h1>
+    <div id="stats">building…</div>
+    <div class="spacer"></div>
+    <button class="ghost" id="btnSpin">Spin: off</button>
+    <button class="ghost" id="btnWire">Wireframe</button>
+    <button id="btnGlb">Export .glb</button>
+    <button class="ghost" id="btnGltf">Export .gltf</button>
+  </header>
+  <div id="sheet"><canvas id="cv"></canvas><div id="labels"></div></div>
+  <footer id="note"></footer>
+</div>
+
+<script type="module">
+import * as THREE from 'three';
+import { GLTFExporter } from 'three/addons/exporters/GLTFExporter.js';
+import { createLowPolyGolfer, modelStats, RIG } from './src/model/lowpoly-golfer.js';
+
+const model = createLowPolyGolfer();
+
+// One scene, six cameras, one renderer scissored into six panes. A separate
+// renderer per view would be six WebGL contexts for one 3 000-triangle model.
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0xf4f5f7);
+scene.add(model);
+
+// Studio lighting: a soft key from the front-left, a cool fill from behind,
+// and enough ambient that the faceting reads without any face going black.
+scene.add(new THREE.HemisphereLight(0xffffff, 0xc9d2da, 1.35));
+const key = new THREE.DirectionalLight(0xfff6e8, 2.1);
+key.position.set(-2.2, 3.4, 3.0);
+scene.add(key);
+const rim = new THREE.DirectionalLight(0xdfe9ff, 0.85);
+rim.position.set(2.6, 1.8, -2.8);
+scene.add(rim);
+
+const H = RIG.height;
+const mid = new THREE.Vector3(0, H * 0.52, 0);
+
+// Five orthographic elevations plus one perspective three-quarter, which is
+// the layout of the reference sheet: the flat views are for checking
+// proportion, the last one is for checking that it reads as a person.
+const VIEWS = [
+  { name: 'Front view',     dir: [0, 0, 1],       iso: false },
+  { name: 'Back view',      dir: [0, 0, -1],      iso: false },
+  { name: 'Side view (L)',  dir: [-1, 0, 0],      iso: false },
+  { name: 'Side view (R)',  dir: [1, 0, 0],       iso: false },
+  { name: 'Top-down view',  dir: [0, 1, 0.0001],  iso: false },
+  { name: 'Isometric 3/4',  dir: [0.85, 0.42, 1], iso: true },
+];
+
+for (const v of VIEWS) {
+  if (v.iso) {
+    v.cam = new THREE.PerspectiveCamera(26, 1, 0.1, 40);
+  } else {
+    v.cam = new THREE.OrthographicCamera(-1, 1, 1, -1, 0.01, 40);
+  }
+}
+
+const renderer = new THREE.WebGLRenderer({ canvas: document.getElementById('cv'), antialias: true });
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+
+const labels = document.getElementById('labels');
+const labEls = VIEWS.map((v) => {
+  const el = document.createElement('div');
+  el.className = 'lab';
+  el.textContent = v.name;
+  labels.appendChild(el);
+  return el;
+});
+
+const COLS = 6;
+function layout() {
+  const host = document.getElementById('sheet');
+  const w = host.clientWidth, h = host.clientHeight;
+  renderer.setSize(w, h, false);
+
+  const pw = w / COLS;
+  VIEWS.forEach((v, i) => {
+    const x = i * pw;
+    v.rect = { x, y: 0, w: pw, h };
+    // Framed to the model with a margin, so every pane shows the same figure
+    // at the same scale and the proportions can be compared across them.
+    const span = H * 0.62;
+    const aspect = pw / h;
+    if (v.cam.isOrthographicCamera) {
+      v.cam.left = -span * aspect; v.cam.right = span * aspect;
+      v.cam.top = span; v.cam.bottom = -span;
+    } else {
+      v.cam.aspect = aspect;
+    }
+    v.cam.updateProjectionMatrix();
+
+    const d = new THREE.Vector3(...v.dir).normalize().multiplyScalar(v.iso ? 5.2 : 6);
+    v.cam.position.copy(mid).add(d);
+    v.cam.up.set(0, 1, 0);
+    if (Math.abs(v.dir[1]) > 0.9) v.cam.up.set(0, 0, -1);   // top-down needs a new up
+    v.cam.lookAt(mid);
+
+    labEls[i].style.left = (x + 10) + 'px';
+    labEls[i].style.top = '10px';
+  });
+}
+addEventListener('resize', layout);
+layout();
+
+let spin = 0, spinning = false;
+function frame() {
+  requestAnimationFrame(frame);
+  if (spinning) { spin += 0.006; model.rotation.y = spin; }
+  renderer.setScissorTest(true);
+  for (const v of VIEWS) {
+    const r = v.rect;
+    renderer.setViewport(r.x, r.y, r.w, r.h);
+    renderer.setScissor(r.x, r.y, r.w, r.h);
+    renderer.render(scene, v.cam);
+  }
+  renderer.setScissorTest(false);
+}
+frame();
+
+// ---------------------------------------------------------------- readout
+const st = modelStats(model);
+document.getElementById('stats').textContent =
+  `${st.triangles.toLocaleString()} tris · ${st.meshes} meshes · ${st.materials.length} materials · ${RIG.height} m`;
+document.getElementById('note').textContent =
+  `Head ${(RIG.headTop - RIG.headBottom).toFixed(3)} m — ` +
+  `${(RIG.height / (RIG.headTop - RIG.headBottom)).toFixed(2)} heads tall. ` +
+  `Fingertips at ${RIG.fingertip.toFixed(2)} m, mid-thigh is ` +
+  `${((RIG.crotch + RIG.knee) / 2).toFixed(2)} m. ` +
+  `Materials: ${st.materials.join(', ')}.`;
+
+// ---------------------------------------------------------------- export
+function save(blob, name) {
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = name;
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(url), 4000);
+}
+
+function exportModel(binary) {
+  // Exported with the spin undone, so the file is always in its bind pose
+  // however the sheet happened to be turned when the button was pressed.
+  const y = model.rotation.y;
+  model.rotation.y = 0;
+  new GLTFExporter().parse(model, (out) => {
+    model.rotation.y = y;
+    if (binary) save(new Blob([out], { type: 'model/gltf-binary' }), 'lowpoly-golfer.glb');
+    else save(new Blob([JSON.stringify(out, null, 2)], { type: 'model/gltf+json' }), 'lowpoly-golfer.gltf');
+  }, (e) => { model.rotation.y = y; console.error(e); }, { binary });
+}
+
+document.getElementById('btnGlb').onclick = () => exportModel(true);
+document.getElementById('btnGltf').onclick = () => exportModel(false);
+document.getElementById('btnSpin').onclick = (e) => {
+  spinning = !spinning;
+  e.target.textContent = 'Spin: ' + (spinning ? 'on' : 'off');
+  if (!spinning) { spin = 0; model.rotation.y = 0; }
+};
+let wire = false;
+document.getElementById('btnWire').onclick = () => {
+  // Collected first, then toggled once each. Materials are shared between
+  // meshes, so flipping inside the traverse toggled the busy ones several
+  // times and left whichever had an even number of users looking solid.
+  wire = !wire;
+  const seen = new Set();
+  model.traverse((o) => { if (o.isMesh) seen.add(o.material); });
+  for (const m of seen) m.wireframe = wire;
+};
+
+// For the console, and for anything that wants to script the export.
+window.golferModel = { model, scene, stats: () => modelStats(model), exportModel };
+</script>
+</body>
+</html>
