@@ -41,6 +41,20 @@ export let HOLE_LENGTH = 0;
 export let WATER_Y = -999;
 export let BUNKERS = [];
 export let POND = null;
+/**
+ * The sea.
+ *
+ * Not a pond. A pond is an ellipse lying in the ground with a bed under it;
+ * the sea is everything past a line, thirty yards below the course, with a
+ * cliff where the land stops. That difference is the whole character of a
+ * clifftop hole — you are not carrying water, you are playing along the edge
+ * of something that ends.
+ *
+ * `off` holds the cliff top's lateral offset sampled at every centreline
+ * point, so working out which side of the edge a point falls on is an array
+ * lookup rather than a curve solve.
+ */
+export let OCEAN = null;   // { side, y, off: Float64Array, seaward: {x, z} }
 export let CREEK = null;   // { pts:[{x,z}], w: half-width, y: waterline }
 export let MOUNDS = [];
 
@@ -102,7 +116,27 @@ export function setHole(def) {
   };
   HOLE_POS = { x: g.x + 1.5, z: g.z - 2 };
 
-  BUNKERS = (def.bunkers ?? []).map((b, i) => {
+  // Bunkers first, but the shore has to be known before they are placed: one
+  // whose outline runs over the cliff cannot be dug (the ground it would sit
+  // in has fallen away), and what is left is a shelf of sand hanging in the
+  // rock face. Easier to refuse it than to carve around it.
+  const shoreOffFor = def.shore ? (at) => {
+    const pts = def.shore.off;
+    let k = 0;
+    while (k < pts.length - 2 && pts[k + 1][0] < at) k++;
+    const [a0, o0] = pts[k];
+    const [a1, o1] = pts[Math.min(k + 1, pts.length - 1)];
+    const uu = a1 === a0 ? 0 : clamp((at - a0) / (a1 - a0), 0, 1);
+    return o0 + (o1 - o0) * uu * uu * (3 - 2 * uu);
+  } : null;
+
+  BUNKERS = (def.bunkers ?? []).filter((b) => {
+    if (!shoreOffFor) return true;
+    const side = def.shore.side ?? 1;
+    const inland = side > 0 ? shoreOffFor(b.at) - b.off : b.off - shoreOffFor(b.at);
+    // Its own radius plus the wobble the coastline is allowed, plus margin.
+    return inland > b.rx + 18;
+  }).map((b, i) => {
     const p = resolve(b.at, b.off);
     // Strong: bunkers are the most irregular thing on a golf course.
     return {
@@ -118,6 +152,38 @@ export function setHole(def) {
       x: p.x, z: p.z, rx: def.water.rx, rz: def.water.rz, rot: def.water.rot ?? 0,
       // Enough to give the bank a bay or two rather than a drawn oval.
       h: outline(def.n * 6151 + 29, 0.19, 0.12, 0.07),
+    };
+  }
+
+  OCEAN = null;
+  if (def.shore) {
+    const side = def.shore.side ?? 1;
+    const pts = def.shore.off;
+    const off = new Float64Array(N);
+    for (let i = 0; i < N; i++) {
+      const dist = pS[i];
+      let k = 0;
+      while (k < pts.length - 2 && pts[k + 1][0] < dist) k++;
+      const [a0, o0] = pts[k];
+      const [a1, o1] = pts[Math.min(k + 1, pts.length - 1)];
+      // Smoothstepped, not linear. A cove is described by two points a few
+      // dozen yards apart, and interpolating them straight gives the cliff a
+      // chamfered corner — it read as a quarry rather than as a bay.
+      const uu = a1 === a0 ? 0 : clamp((dist - a0) / (a1 - a0), 0, 1);
+      const u = uu * uu * (3 - 2 * uu);
+      // Wobbled, or the coast is a drawn line. Two long wavelengths only:
+      // anything shorter than a few dozen yards reads as noise on a cliff
+      // rather than as headlands and coves.
+      off[i] = o0 + (o1 - o0) * u
+             + 7.0 * Math.sin(dist * 0.0135 + def.n * 1.7)
+             + 3.5 * Math.sin(dist * 0.0310 + def.n * 3.1);
+    }
+    // Which way is out to sea, in world space — taken at the middle of the
+    // hole, which is close enough for the backdrop and the ambience.
+    const mid = (N / 2) | 0;
+    OCEAN = {
+      side, y: def.shore.y ?? -28, off,
+      seaward: { x: -pTZ[mid] * side, z: pTX[mid] * side },
     };
   }
 
@@ -299,6 +365,20 @@ export function bunkerField(x, z) {
   return m;
 }
 export function pondField(x, z) { return POND ? shapeField(x, z, POND) : Infinity; }
+
+/**
+ * Signed yards inland of the cliff top — positive on land, negative over the
+ * sea. Takes an already-computed `nearest` where the caller has one, because
+ * nearest() hands back a shared object and calling it again mid-way through
+ * heightAt would clobber the copy that function is holding.
+ */
+export function shoreEdge(x, z, n) {
+  if (!OCEAN) return 999;
+  const nn = n ?? nearest(x, z);
+  // perp is the negative of the hole-definition's `off`, so the lateral
+  // offset of a point is -perp and the two comparisons fold into a sign.
+  return OCEAN.side > 0 ? OCEAN.off[nn.i] + nn.perp : -nn.perp - OCEAN.off[nn.i];
+}
 export function greenField(x, z) { return shapeField(x, z, GREEN); }
 
 /**
@@ -329,6 +409,7 @@ export function creekField(x, z) {
 export function waterLevelAt(x, z) {
   if (CREEK && creekField(x, z) < 1.35) return CREEK.y;
   if (POND && pondField(x, z) < 1.35) return WATER_Y;
+  if (OCEAN && shoreEdge(x, z) < 1.5) return OCEAN.y;
   return -999;
 }
 
@@ -359,6 +440,7 @@ export function distToHole(x, z) { return Math.hypot(x - HOLE_POS.x, z - HOLE_PO
  * Priority: water > bunker > green > fairway > rough.
  */
 export function surfaceAt(x, z) {
+  if (OCEAN && shoreEdge(x, z) < 0) return 'water';
   if (pondField(x, z) < 1 || creekField(x, z) < 1) return 'water';
   if (bunkerField(x, z) < 1) return 'sand';
   if (greenField(x, z) < 1) return 'green';
@@ -371,6 +453,9 @@ export function surfaceAt(x, z) {
 /** True once the ball has wandered outside the playable world. */
 export function isOutOfBounds(x, z) {
   const n = nearest(x, z);
+  // Over the sea it is a splash, not a lost ball. Both cost a stroke, but one
+  // of them is the hole's defining feature and deserves to be named as such.
+  if (OCEAN && shoreEdge(x, z, n) < 0) return false;
   return n.dist > 130 || z > pZ[0] + 45 || z < pZ[N - 1] - 45;
 }
 
@@ -429,13 +514,26 @@ export function heightAt(x, z) {
     h = lerp(h, GREEN_BASE + crown, gb);
   }
 
+  // How far inland this point is, worked out before anything is dug — a
+  // bunker whose outline runs over the edge would otherwise hang its floor in
+  // mid-air off the cliff face, and mounding would build headlands out of
+  // nothing.
+  let seaward = 0;
+  if (OCEAN) {
+    const se = OCEAN.side > 0 ? OCEAN.off[n.i] + n.perp : -n.perp - OCEAN.off[n.i];
+    seaward = 1 - smoothstep(-6.0, 1.5, se);
+    // A lip of broken rock just inside the edge.
+    h += 1.4 * (1 - smoothstep(0, 8, Math.abs(se - 4)));
+  }
+  const onLand = 1 - seaward;
+
   // Free-standing mounding, suppressed over the putting surface.
   for (let i = 0; i < MOUNDS.length; i++) {
     const m = MOUNDS[i];
     const d = Math.hypot(x - m.x, z - m.z);
     if (d < m.r) {
       const k = Math.cos((d / m.r) * Math.PI * 0.5);
-      h += m.h * k * k * (1 - gb);
+      h += m.h * k * k * (1 - gb) * onLand;
     }
   }
 
@@ -464,8 +562,8 @@ export function heightAt(x, z) {
       // crescent on the grass outside it — an artefact worth far more than
       // the detail is worth. Spread this thin, the slope stays under a degree.
       const lip = smoothstep(0.92, 1.22, f) * (1 - smoothstep(1.22, 1.90, f));
-      h -= 2.0 * bowl;
-      h += 0.20 * lip;
+      h -= 2.0 * bowl * onLand;
+      h += 0.20 * lip * onLand;
     }
   }
 
@@ -528,9 +626,15 @@ export function heightAt(x, z) {
 
   // The cart path is graded: sits just below the turf either side of it.
 
-  // A distant rim so the world never shows a cut edge against the sky.
+  // The cliff itself. Steep on purpose — about seventy degrees, which at this
+  // grid spacing is three quads. A gentler fall would be a beach, and what a
+  // clifftop hole needs is ground that simply stops.
+  if (seaward > 0) h = lerp(h, OCEAN.y - 7, seaward);
+
+  // A distant rim so the world never shows a cut edge against the sky — but
+  // not out to sea, where it would be a wall of land rising out of the water.
   const rim = Math.max(0, n.dist - 150) * 0.11;
-  h += Math.min(rim, 26) + smoothstep(150, 320, n.dist) * 12;
+  h += (Math.min(rim, 26) + smoothstep(150, 320, n.dist) * 12) * (1 - seaward);
 
   return h;
 }
@@ -542,6 +646,7 @@ export function heightAt(x, z) {
  */
 export function surfaceHeightAt(x, z) {
   const h = heightAt(x, z);
+  if (OCEAN && shoreEdge(x, z) < 0) return Math.max(h, OCEAN.y);
   if (CREEK && creekField(x, z) < 1) return Math.max(h, CREEK.y);
   if (POND && pondField(x, z) < 1) return Math.max(h, WATER_Y);
   return h;
@@ -577,6 +682,15 @@ export const SURFACE_COLORS = {
   waterEdge:[0x6b, 0xb2, 0xc6],
   // Pine straw. Warm red-brown, and darker than it looks in photographs —
   // it sits in tree shade nearly all day.
+  // Weathered lava at the cliff edge. Dark, but not black: in this light a
+  // true black reads as a hole cut in the ground rather than as rock.
+  rock:     [0x4a, 0x45, 0x40],
+  rockLit:  [0x6d, 0x66, 0x5c],
+  // Dry native scrub above the cliff — the tan fringe in every photograph of
+  // a course like this, and the thing that keeps the green from running
+  // straight into the blue.
+  scrub:    [0xa8, 0x9c, 0x62],
+  ocean:    [0x14, 0x44, 0x6e],
   straw:    [0x9d, 0x6b, 0x3e],
   strawAlt: [0x85, 0x56, 0x31],
 };
@@ -705,7 +819,7 @@ export function makeCourseTexture(size = 2048) {
 
       // --- bunkers: bright sand, damp at the rim ---
       const bf = bunkerField(x, z);
-      if (bf < 1.15) {
+      if (bf < 1.15 && (!OCEAN || shoreEdge(x, z, n) > 2)) {
         const m = 1 - smoothstep(0.97, 1.03, bf);
         mix(C.sandDark, C.sand, 1 - smoothstep(0.35, 0.95, bf), tmp);
         tmp[0] += (mott - 0.5) * 6; tmp[1] += (mott - 0.5) * 5; tmp[2] += (mott - 0.5) * 4;
@@ -747,6 +861,20 @@ export function makeCourseTexture(size = 2048) {
           mix(col, C.waterEdge, damp * 0.35, col);
           mix(col, C.water, bed, col);
         }
+      }
+
+      // --- the coast: scrub, then rock, then open sea ---
+      if (OCEAN) {
+        const se = OCEAN.side > 0 ? OCEAN.off[n.i] + n.perp : -n.perp - OCEAN.off[n.i];
+        const scrub = smoothstep(34, 12, se) * (1 - smoothstep(12, 4, se) * 0.35);
+        if (scrub > 0.001) mix(col, C.scrub, scrub * 0.72 * (1 - smoothstep(60, 24, n.dist)), col);
+        const rock = 1 - smoothstep(3.0, 20.0, se);
+        if (rock > 0.001) {
+          mix(C.rock, C.rockLit, mott, tmp);
+          mix(col, tmp, rock * 0.94, col);
+        }
+        const sea = 1 - smoothstep(-9.0, -1.5, se);
+        if (sea > 0.001) mix(col, C.ocean, sea, col);
       }
 
       const o = (py * size + px) * 4;

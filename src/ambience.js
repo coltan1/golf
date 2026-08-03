@@ -13,7 +13,7 @@ import * as THREE from 'three';
 import { mulberry32, lerp } from './util.js';
 import { timeOfDay } from './scenery.js';
 import {
-  heightAt, centreXAt, fairwayHalfWidth, nearest, TEE, WORLD_CZ, WORLD_SIZE, POND,
+  heightAt, centreXAt, fairwayHalfWidth, nearest, TEE, WORLD_CZ, WORLD_SIZE, POND, OCEAN,
 } from './course.js';
 
 // Light travels the opposite way to the sun's offset. Derived rather than
@@ -345,9 +345,16 @@ export function createSeagulls() {
 
   for (let i = 0; i < COUNT; i++) {
     let x, z;
-    // Over the water where there is water, which on this course is most of one
-    // side of every hole; scattered along the corridor otherwise.
-    if (POND && rnd() < 0.72) {
+    // Out over the sea, which is where gulls are. Placed by walking off the
+    // centreline in the seaward direction rather than by sampling and
+    // rejecting: past the cliff every point is water, so there is nothing to
+    // reject against and no reason to guess.
+    if (OCEAN && rnd() < 0.8) {
+      z = lerp(zNear, zFar, rnd());
+      const outward = lerp(70, 260, rnd());
+      x = centreXAt(z) + OCEAN.seaward.x * outward;
+      z += OCEAN.seaward.z * outward;
+    } else if (POND && rnd() < 0.72) {
       x = POND.x + lerp(-1, 1, rnd()) * POND.rx * 0.9;
       z = POND.z + lerp(-1, 1, rnd()) * POND.rz * 0.9;
     } else {
@@ -357,7 +364,9 @@ export function createSeagulls() {
       x = centreXAt(z) + side * (fairwayHalfWidth(n.t) + lerp(20, 120, rnd()));
     }
     birds.push({
-      home: new THREE.Vector3(x, Math.max(0, heightAt(x, z)), z),
+      // Clamped at sea level: over the water heightAt returns the sea floor,
+      // and a gull thirty yards under the surface is not a gull.
+      home: new THREE.Vector3(x, Math.max(OCEAN ? OCEAN.y + 30 : 0, heightAt(x, z)), z),
       r: lerp(18, 62, rnd()),
       w: lerp(0.07, 0.19, rnd()) * (rnd() < 0.5 ? 1 : -1),   // both directions
       ph: rnd() * Math.PI * 2,

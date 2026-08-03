@@ -11,9 +11,9 @@ import * as THREE from 'three';
 import { clamp, lerp } from './util.js';
 import {
   heightAt, surfaceAt, distToHole, aimPointAhead,
-  HOLE_POS, TEE, PAR, HOLE_LENGTH, HOLE, setHole, POND, CREEK,
+  HOLE_POS, TEE, PAR, HOLE_LENGTH, HOLE, setHole, POND, CREEK, OCEAN,
 } from './course.js';
-import { createTerrain, createWater, createCreek, makeToonRamp, makeGroundRamp } from './terrain.js';
+import { createTerrain, createWater, createOcean, createCreek, makeToonRamp, makeGroundRamp } from './terrain.js';
 import { createSky, createLights, createClouds, createBackdrop, FOG_COLOR, timeOfDay, setTimeOfDay } from './scenery.js';
 import {
   createTrees, createGrass, createClubhouse, createFlag, createTeeMarkers, createBridge,
@@ -63,7 +63,7 @@ const hud = new Hud();
 const audio = new Audio();
 
 // ---------------------------------------------------------------- world
-let terrain, water, creek, clouds, flag, clubhouse, golfer, ball, rig, aimLine, input, lights, freeCam;
+let terrain, water, ocean, creek, clouds, flag, clubhouse, golfer, ball, rig, aimLine, input, lights, freeCam;
 let sunRays, fliers, motes;
 let match = null;
 
@@ -151,6 +151,7 @@ function buildWorld() {
   // Most holes have no water at all, and the constructors read their feature's
   // dimensions, so neither may be called when that feature is absent.
   water = POND ? add(createWater()) : null;
+  ocean = OCEAN ? add(createOcean()) : null;
   creek = CREEK ? add(createCreek()) : null;
   if (CREEK) { const b = createBridge(ramp); if (b) add(b); }
 
@@ -656,6 +657,7 @@ function frame() {
   motes.userData.tick(dt);
   match?.update(dt);
   if (water) water.userData.tick(time);
+  if (ocean) ocean.userData.tick(time);
   if (creek) creek.userData.tick(time);
   flag.userData.tick(time);
   clubhouse.userData.tick(dt);

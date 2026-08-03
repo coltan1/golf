@@ -10,6 +10,7 @@
  */
 
 import * as THREE from 'three';
+import { OCEAN } from './course.js';
 import { mulberry32, lerp, fbm2 } from './util.js';
 import { WORLD_CX, WORLD_CZ } from './course.js';
 
@@ -253,6 +254,19 @@ export function createBackdrop(toonRamp) {
   group.name = 'backdrop';
   const rnd = mulberry32(4471);
 
+  // Where there is open sea, the horizon is the sea. Ridges are dropped from
+  // the arc facing out to water — a wall of hills behind an ocean is the one
+  // thing that would give away that it is not one.
+  const seaA = OCEAN ? Math.atan2(OCEAN.seaward.x, OCEAN.seaward.z) : null;
+  const openWater = (a) => {
+    if (seaA === null) return false;
+    let d = Math.abs(((a - seaA + Math.PI) % (Math.PI * 2)) - Math.PI);
+    // Generous, and it has to be. A ridge is up to six hundred yards wide, so
+    // one whose centre sits comfortably inland still hangs its shoulder over
+    // the water — ±66° left a wall of hills standing behind the sea.
+    return d < 1.62;                    // ±93°: the whole seaward half
+  };
+
   // Near ridges are discrete with gaps, so the hazier layers behind show
   // through them; far ridges are dense and continuous to close the horizon.
   // Colour carries the depth, not just fog. Each layer steps darker, cooler
@@ -305,17 +319,22 @@ export function createBackdrop(toonRamp) {
     for (let i = 0; i < L.count; i++) {
       const a = (i / L.count) * Math.PI * 2 + (rnd() - 0.5) * 0.30;
       const r = L.ringR * lerp(0.9, 1.12, rnd());
+      // Drawn from `rnd` before the skip, so removing a ridge never reshuffles
+      // the ones that remain.
+      const skip = openWater(a);
       const geo = forestRidgeGeo(
         rnd,
         lerp(L.w[0], L.w[1], rnd()),
         lerp(L.top[0], L.top[1], rnd()),
         lerp(L.d[0], L.d[1], rnd())
       );
+      if (skip) { geo.dispose(); continue; }
       place.makeRotationY(a);
       place.setPosition(WORLD_CX + Math.sin(a) * r, 0, WORLD_CZ + Math.cos(a) * r);
       geo.applyMatrix4(place);
       parts.push(geo);
     }
+    if (!parts.length) continue;
     const mesh = new THREE.Mesh(merge(parts), mat);
     // Far too big and far away to take part in the shadow map.
     mesh.castShadow = mesh.receiveShadow = false;

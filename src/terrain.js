@@ -18,6 +18,7 @@ import {
   WORLD_SIZE, WORLD_CX, WORLD_CZ, WATER_Y, POND, CREEK, MOW_PERIOD,
   SURFACE_COLORS, heightAt, makeCourseTexture, nearest, fairwayHalfWidth, greenEdge,
   bunkerEdge, BUNKERS,
+  OCEAN,
 } from './course.js';
 import { smoothstep } from './util.js';
 
@@ -216,7 +217,23 @@ export function createTerrain(renderer, toonRamp, treeMap) {
     shader.uniforms.uGreen  = { value: colorUniform(SURFACE_COLORS.greenA) };
     shader.uniforms.uSand   = { value: colorUniform(SURFACE_COLORS.sand) };
     // Pine straw is what falls off pines. A palm drops fronds on sand.
-    shader.uniforms.uStrawAmt = { value: COURSE.palms ? 0 : 1 };
+    shader.uniforms.uStrawAmt = { value: COURSE.coastal ? 0 : 1 };
+    // Rock by steepness, which is the only rule that survives a top-down
+    // texture — and the honest one.
+    //
+    // The course texture is baked looking straight down, so a cliff is very
+    // nearly vertical and occupies almost no texels: it cannot be painted
+    // there at all. Absolute height was the first attempt and it was wrong,
+    // because the fairways roll through ten yards of their own and any
+    // threshold that caught the cliff also caught half the course. What
+    // actually distinguishes the cliff is that it is the only thing on the
+    // property steeper than about twenty degrees — bunker faces are graded to
+    // a fifth of that on purpose, to keep them off the cel ramp's band edges.
+    shader.uniforms.uRockAmt = { value: OCEAN ? 1.0 : 0.0 };
+    // And everything under the sea, however flat.
+    shader.uniforms.uRockTop = { value: OCEAN ? OCEAN.y + 2.0 : -9999.0 };
+    shader.uniforms.uRock  = { value: colorUniform(SURFACE_COLORS.rock) };
+    shader.uniforms.uRockB = { value: colorUniform(SURFACE_COLORS.rockLit) };
     shader.uniforms.uStraw  = { value: colorUniform(SURFACE_COLORS.straw) };
     shader.uniforms.uStrawB = { value: colorUniform(SURFACE_COLORS.strawAlt) };
     // Where the trees actually stand, so the beds can sit under them.
@@ -252,15 +269,18 @@ export function createTerrain(renderer, toonRamp, treeMap) {
       .replace('#include <common>', `#include <common>
         attribute vec4 aCourse;
         varying vec4 vCourse;
-        varying vec2 vWorld;`)
+        varying vec2 vWorld;
+        varying float vWorldY;`)
       .replace('#include <begin_vertex>', `#include <begin_vertex>
         vCourse = aCourse;
-        vWorld = position.xz;`);
+        vWorld = position.xz;
+        vWorldY = position.y;`);
 
     shader.fragmentShader = shader.fragmentShader
       .replace('#include <common>', `#include <common>
         varying vec4 vCourse;
         varying vec2 vWorld;
+        varying float vWorldY;
         // Set during map_fragment, read again after lighting.
         float ccSandM;
 
@@ -317,6 +337,10 @@ export function createTerrain(renderer, toonRamp, treeMap) {
         uniform vec3 uCollar;
         uniform vec3 uGreen;
         uniform float uStrawAmt;
+        uniform float uRockAmt;
+        uniform float uRockTop;
+        uniform vec3 uRock;
+        uniform vec3 uRockB;
         uniform vec3 uStraw;
         uniform vec3 uStrawB;
         uniform sampler2D uTreeMap;
@@ -500,6 +524,29 @@ export function createTerrain(renderer, toonRamp, treeMap) {
           // well as value is what stops it looking like noise on flat paint.
           diffuseColor.rgb *= vec3(1.0 + grain * 1.30, 1.0 + grain, 1.0 + grain * 0.70);
 
+          // --- the cliff -----------------------------------------------------
+          // Last, so it covers the turf treatment above rather than being
+          // covered by it. Two octaves of blotching, because bare rock at this
+          // scale is all blotch — a flat dark band reads as a painted skirt.
+          //
+          // The geometric normal, from the derivatives of world position,
+          // rather than the shaded one: the shaded normal is smoothed across
+          // the lip and would bleed rock several yards back onto the turf.
+          // vWorld is XZ only, so the slope comes from how fast height changes
+          // per pixel against how far the ground moves per pixel.
+          float ccRun = length(vec2(dFdx(vWorld.x), dFdx(vWorld.y)))
+                      + length(vec2(dFdy(vWorld.x), dFdy(vWorld.y)));
+          float ccRise = abs(dFdx(vWorldY)) + abs(dFdy(vWorldY));
+          float ccSlope = ccRise / max(ccRun, 1e-4);
+          float rockM = uRockAmt * max(
+            smoothstep(0.55, 1.30, ccSlope),
+            1.0 - smoothstep(uRockTop - 6.0, uRockTop, vWorldY));
+          if (rockM > 0.001) {
+            float rn = ccNoise(vWorld * 0.09) * 0.6 + ccNoise(vWorld * 0.34) * 0.4;
+            vec3 rockCol = mix(uRock, uRockB, smoothstep(0.32, 0.78, rn));
+            diffuseColor.rgb = mix(diffuseColor.rgb, rockCol, rockM);
+          }
+
         }`);
   };
 
@@ -627,6 +674,66 @@ function waterFragment(src) {
         // Nearly opaque. Water this shallow in alpha let the bed's colour
         // dominate at any distance, and the bed is painted to look like a bed.
         diffuseColor.a = max(mix(0.88, 0.98, depth), foam * 0.95);`);
+}
+
+/**
+ * The sea: one enormous plane at sea level, running past the horizon.
+ *
+ * No outline and nothing to clip against, which is the difference between this
+ * and the pond. The land hides it — every inch of ground inland of the cliff
+ * is above sea level, and the world rim behind the player is thirty-eight
+ * yards up — so the plane only shows where the ground has fallen away, and
+ * that is exactly where the sea should be.
+ *
+ * Big enough to reach the horizon: at eye height on a clifftop the true
+ * horizon is a few miles out, and anything short of that shows its far edge as
+ * a line of sky under the backdrop. Six thousand yards puts the edge well
+ * behind the furthest ridge.
+ */
+export function createOcean() {
+  const geo = new THREE.PlaneGeometry(6000, 6000, 200, 200);
+  geo.rotateX(-Math.PI / 2);
+
+  const uniforms = waterUniforms();
+  // Open water is darker and flatter than a pond: no shallows, no bank to go
+  // pale against, and the crests are the only thing breaking it up.
+  uniforms.uDeep.value = new THREE.Color(0x0b3f66);
+  uniforms.uShallow.value = new THREE.Color(0x145f8c);
+
+  const mat = new THREE.MeshBasicMaterial({ transparent: false });
+  mat.onBeforeCompile = (shader) => {
+    Object.assign(shader.uniforms, uniforms);
+    shader.vertexShader = shader.vertexShader
+      .replace('#include <common>', `#include <common>
+        uniform float uTime;
+        varying vec2 vLocal;
+        varying float vField;`)
+      .replace('#include <begin_vertex>', `#include <begin_vertex>
+        vLocal = vec2(position.x, position.z);
+        // The pond's field runs 0 at the middle to 1 at the bank, and the
+        // fragment shader reads it as depth. Open water is all middle, so it
+        // is pinned at zero — pinning it near one gave the pale shallows
+        // colour across an entire ocean.
+        vField = 0.0;
+        transformed.y +=
+          0.42 * sin(position.x * 0.021 + uTime * 0.42) +
+          0.30 * sin(position.z * 0.028 - uTime * 0.33) +
+          0.16 * sin((position.x + position.z) * 0.052 + uTime * 0.61);`);
+    shader.fragmentShader = waterFragment(shader.fragmentShader)
+      // The pond discards outside its ellipse. There is no outside here.
+      .replace('if (vField > 1.0) discard;', '');
+  };
+
+  const mesh = new THREE.Mesh(geo, mat);
+  mesh.name = 'ocean';
+  mesh.position.set(WORLD_CX, OCEAN.y, WORLD_CZ);
+  mesh.receiveShadow = false;
+  mesh.frustumCulled = false;
+  // Behind the terrain in the draw order but still depth-tested, so the land
+  // occludes it wherever the land is higher.
+  mesh.renderOrder = -50;
+  mesh.userData.tick = (time) => { uniforms.uTime.value = time; };
+  return mesh;
 }
 
 export function createWater() {

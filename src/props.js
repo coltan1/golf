@@ -11,7 +11,7 @@ import * as THREE from 'three';
 import { mulberry32, lerp, hash3, clamp, fbm2 } from './util.js';
 import { COURSE } from './courses.js';
 import {
-  heightAt, nearest, centreXAt, fairwayHalfWidth, bunkerField, pondField,
+  heightAt, nearest, centreXAt, fairwayHalfWidth, bunkerField, pondField, shoreEdge,
   GREEN, HOLE_POS, TEE, WORLD_CX, WORLD_CZ, WORLD_SIZE,
   greenEdge, bunkerEdge, CREEK,
 } from './course.js';
@@ -211,11 +211,23 @@ export function treeMapTexture() {
 
 // ---------------------------------------------------------------- trees
 /** Is this a legal, sensible spot for a tree? */
+/**
+ * Nothing grows on the cliff, or within a few yards of the lip.
+ *
+ * Shared by every scatter pass here. It is the same rule three times over —
+ * trees, scrub and grass all stopped at the rock — and writing it once means
+ * they stop at the same line rather than three slightly different ones.
+ */
+function ashore(x, z, margin = 5) {
+  return shoreEdge(x, z) > margin;
+}
+
 function plantable(x, z) {
   const n = nearest(x, z);
   // Only a narrow strip of second cut before the treeline starts. The holes
   // are corridors cut through forest, not clearings in a park.
   if (n.dist < fairwayHalfWidth(n.t) + 11) return false;
+  if (!ashore(x, z, 8)) return false;
   if (Math.hypot(x - GREEN.x, z - GREEN.z) < GREEN.r + 13) return false;
   if (Math.hypot(x - TEE.x, z - TEE.z) < 26) return false;
   if (bunkerField(x, z) < 1.7) return false;
@@ -234,6 +246,7 @@ function shrubbable(x, z) {
   const n = nearest(x, z);
   const hw = fairwayHalfWidth(n.t);
   if (n.dist < hw + 5 || n.dist > hw + 30) return false;
+  if (!ashore(x, z, 5)) return false;
   if (Math.hypot(x - GREEN.x, z - GREEN.z) < GREEN.r + 10) return false;
   if (Math.hypot(x - TEE.x, z - TEE.z) < 22) return false;
   if (bunkerField(x, z) < 1.4) return false;
@@ -258,21 +271,28 @@ const SPECIES = [
   { key: 'maple', weight: 0.05 },
 ];
 
-// Where palms grow, they are the whole treeline. Mixing them into the parkland
-// species list gave a pine forest with palms in it, which is neither place.
-const PALM_SPECIES = [
-  { key: 'palm', weight: 0.82 },
-  { key: 'young', weight: 0.12 },
-  { key: 'broadleaf', weight: 0.06 },
+/**
+ * What grows on a headland.
+ *
+ * Kiawe: a short thick trunk and a canopy that has been pressed flat by wind
+ * off the water. It is the tree in every photograph of a course like this, and
+ * it is nothing like a pine — the silhouette is wider than it is tall, and you
+ * see the sea *through* it and under it, which is most of why these holes look
+ * the way they do. A few palms among them, near the tees, and nothing else.
+ */
+const COAST_SPECIES = [
+  { key: 'kiawe', weight: 0.74 },
+  { key: 'palm', weight: 0.15 },
+  { key: 'young', weight: 0.11 },
 ];
 
 function pickSpecies(r) {
   let acc = 0;
-  for (const s of (COURSE.palms ? PALM_SPECIES : SPECIES)) {
+  for (const s of (COURSE.coastal ? COAST_SPECIES : SPECIES)) {
     acc += s.weight;
     if (r <= acc) return s.key;
   }
-  return COURSE.palms ? 'palm' : 'pine';
+  return COURSE.coastal ? 'kiawe' : 'pine';
 }
 
 export function createTrees(toonRamp) {
@@ -307,6 +327,38 @@ export function createTrees(toonRamp) {
         rot: rnd() * Math.PI * 2, lean: rnd(),
         hsl: [lerp(0.30, 0.36, rnd()), lerp(0.34, 0.50, rnd()), lerp(0.13, 0.21, rnd())],
       });
+      return;
+    }
+
+    if (kind === 'kiawe') {
+      // Wider than it is tall, and leaning off the water. The canopy is a
+      // flattened raft of blobs on a short bole rather than a ball on a stick:
+      // a round canopy at this size reads as a shrub, and the flat top is the
+      // whole silhouette.
+      const sc = lerp(1.5, 2.6, rnd()) * k;
+      const lean = lerp(-0.13, 0.13, rnd());
+      const face = rnd() * Math.PI * 2;
+      trunks.push({ x, y, z, rx: sc * 1.15, ry: sc * 0.72, rot: face, tilt: lean, far });
+      const deck = y + sc * 2.5;
+      const spread = sc * 2.5;
+      const base = [lerp(0.20, 0.28, rnd()), lerp(0.30, 0.46, rnd()), lerp(0.24, 0.34, rnd())];
+      const n = 4 + Math.floor(rnd() * 3);
+      for (let i = 0; i < n; i++) {
+        const a = (i / n) * Math.PI * 2 + lerp(-0.4, 0.4, rnd());
+        const rr = i === 0 ? 0 : lerp(0.45, 1.0, rnd());
+        blobs.push({
+          far,
+          x: x + Math.cos(a) * rr * spread + Math.sin(face) * lean * sc * 2,
+          y: deck + lerp(-0.35, 0.5, rnd()) * sc,
+          z: z + Math.sin(a) * rr * spread + Math.cos(face) * lean * sc * 2,
+          s: (i === 0 ? lerp(1.9, 2.5, rnd()) : lerp(1.4, 2.1, rnd())) * sc,
+          // Pressed flat. This is the number that makes it a kiawe.
+          squash: lerp(0.30, 0.44, rnd()),
+          rot: rnd() * Math.PI * 2,
+          tilt: lerp(-0.08, 0.08, rnd()),
+          hsl: [base[0] + lerp(-0.012, 0.012, rnd()), base[1], base[2] + lerp(-0.04, 0.04, rnd())],
+        });
+      }
       return;
     }
 
@@ -438,16 +490,24 @@ export function createTrees(toonRamp) {
 
   // Pass D — azaleas, in drifts along the front of the treeline. One colour
   // per drift, so they read as planted beds rather than confetti.
-  for (let i = 0; i < 170; i++) {
+  //
+  // Not on a headland. Flowering ornamental beds belong to a manicured
+  // parkland course; what grows in salt wind above a cliff is dry scrub, and
+  // this pass is replaced by tussocks in the same places when the course says
+  // it is coastal.
+  for (let i = 0; i < (COURSE.coastal ? 90 : 170); i++) {
     const z = lerp(zNear, zFar, rnd());
     const side = rnd() < 0.5 ? 1 : -1;
     const cx = centreXAt(z) + side * lerp(22, 52, rnd());
     if (!shrubbable(cx, z)) continue;
 
     const white = rnd() < 0.3;
-    const hsl = white
-      ? [lerp(0.02, 0.10, rnd()), lerp(0.05, 0.18, rnd()), lerp(0.88, 0.95, rnd())]
-      : [lerp(0.90, 0.99, rnd()), lerp(0.50, 0.72, rnd()), lerp(0.52, 0.66, rnd())];
+    const hsl = COURSE.coastal
+      // Bleached olive and straw — the fringe above the rocks.
+      ? [lerp(0.11, 0.16, rnd()), lerp(0.20, 0.40, rnd()), lerp(0.34, 0.52, rnd())]
+      : white
+        ? [lerp(0.02, 0.10, rnd()), lerp(0.05, 0.18, rnd()), lerp(0.88, 0.95, rnd())]
+        : [lerp(0.90, 0.99, rnd()), lerp(0.50, 0.72, rnd()), lerp(0.52, 0.66, rnd())];
 
     const count = 4 + Math.floor(rnd() * 7);
     for (let j = 0; j < count; j++) {
@@ -456,7 +516,8 @@ export function createTrees(toonRamp) {
       if (!shrubbable(bx, bz)) continue;
       shrubs.push({
         x: bx, y: heightAt(bx, bz) - 0.25, z: bz,
-        sx: lerp(1.1, 2.1, rnd()), sy: lerp(0.7, 1.2, rnd()),
+        sx: lerp(1.1, 2.1, rnd()) * (COURSE.coastal ? 0.85 : 1),
+        sy: lerp(0.7, 1.2, rnd()) * (COURSE.coastal ? 0.55 : 1),
         rot: rnd() * Math.PI * 2,
         hsl: [hsl[0] % 1, hsl[1], hsl[2] + lerp(-0.05, 0.05, rnd())],
       });
@@ -688,6 +749,7 @@ export function createGrass(toonRamp) {
     if (greenEdge(x, z) > -1.5) continue;
     if (bunkerEdge(x, z) > -1.0) continue;
     if (pondField(x, z) < 1.15) continue;
+    if (!ashore(x, z, 3)) continue;
 
     // Give way to the pine straw. Under a canopy the ground is needles, not
     // grass, and green tufts standing in brown needles read as a mistake — so
