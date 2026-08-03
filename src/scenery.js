@@ -250,6 +250,100 @@ function forestRidgeGeo(rnd, w, top, d) {
   return geo;
 }
 
+/**
+ * A volcano, for the horizon behind an island course.
+ *
+ * Built as a surface of revolution rather than by bumping a sphere the way the
+ * forest ridges are, because the whole shape of one is in its profile: a
+ * mountain range is a lumpy mass and a volcano is a curve. Get the curve wrong
+ * and no amount of surface detail rescues it.
+ *
+ * The curve is concave — steep for the first third down from the summit, then
+ * flattening the rest of the way out. That is what separates a volcano from a
+ * cone: a cone has straight sides and reads as a slag heap or a circus tent,
+ * and it is the single most common way this shape is drawn badly.
+ *
+ * On top of the profile, three things break the symmetry, and it needs all
+ * three or it reads as a lathe turning:
+ *
+ *   the outline is lobed, so the base is not a circle;
+ *   rills run down the flanks, deepening toward the bottom where water would
+ *     have had the furthest to run;
+ *   and the crater is off-centre with one side of its rim blown lower than the
+ *     other, which is how they almost always are.
+ */
+function volcanoGeo(rnd, w, top, d) {
+  const RAD = 96;      // around
+  const RING = 34;     // summit to base
+  const pos = new Float32Array((RAD + 1) * (RING + 1) * 3);
+  const idx = new Uint32Array(RAD * RING * 6);
+
+  // Its own character, drawn once so every vertex agrees about it.
+  const lobeA = rnd() * Math.PI * 2;
+  const lobeB = rnd() * Math.PI * 2;
+  const rillPh = rnd() * Math.PI * 2;
+  const rills = 9 + Math.floor(rnd() * 9);
+  const craterR = 0.055 + rnd() * 0.055;      // fraction of the base radius
+  const craterD = top * (0.05 + rnd() * 0.07);
+  const breach = rnd() * Math.PI * 2;         // the low side of the rim
+  const flank = 1.35 + rnd() * 0.55;          // how concave
+
+  let v = 0;
+  for (let j = 0; j <= RING; j++) {
+    // Bunched toward the summit, where the curvature is.
+    const t = Math.pow(j / RING, 1.35);
+    for (let i = 0; i <= RAD; i++) {
+      const a = (i / RAD) * Math.PI * 2;
+
+      // Lobed outline, so no two directions off the summit are the same.
+      const lobe = 1 + 0.13 * Math.sin(a * 3 + lobeA) + 0.07 * Math.sin(a * 7 + lobeB);
+      let r = t * lobe;
+
+      // The profile. 1 at the summit falling to 0 at the base, concave.
+      let h = Math.pow(1 - t, flank);
+
+      // Rills: shallow at the top, deep at the bottom.
+      const rill = Math.sin(a * rills + rillPh + t * 2.4);
+      h -= 0.055 * t * (1 - t) * (rill * 0.5 + 0.5) * 2.0;
+      r += 0.035 * t * rill;
+
+      // The crater, and its low side.
+      if (t < craterR) {
+        const u = t / craterR;
+        h -= (craterD / top) * (1 - u * u);
+      }
+      const rimLow = Math.cos(a - breach) * 0.5 + 0.5;
+      if (t < craterR * 1.5) {
+        h -= (craterD / top) * 0.55 * rimLow * (1 - t / (craterR * 1.5));
+      }
+
+      pos[v] = Math.cos(a) * r * w;
+      pos[v + 1] = h * top;
+      pos[v + 2] = Math.sin(a) * r * d;
+      v += 3;
+    }
+  }
+
+  let k = 0;
+  for (let j = 0; j < RING; j++) {
+    for (let i = 0; i < RAD; i++) {
+      const a0 = j * (RAD + 1) + i;
+      const b0 = a0 + RAD + 1;
+      idx[k++] = a0; idx[k++] = b0; idx[k++] = a0 + 1;
+      idx[k++] = a0 + 1; idx[k++] = b0; idx[k++] = b0 + 1;
+    }
+  }
+
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+  geo.setIndex(new THREE.BufferAttribute(idx, 1));
+  // Sunk, so the skirt of the cone is under the horizon rather than sitting on
+  // it like a plate.
+  geo.translate(0, -top * 0.06, 0);
+  geo.computeVertexNormals();
+  return geo;
+}
+
 export function createBackdrop(toonRamp) {
   const group = new THREE.Group();
   group.name = 'backdrop';
@@ -268,17 +362,34 @@ export function createBackdrop(toonRamp) {
   // Where the ridge actually stands is the thing that matters, so that is what
   // gets measured — anything on the seaward side of the world, plus a margin
   // for its own width, is dropped.
-  const openWater = (x, z) =>
+  // The margin is the piece's own width, not a constant. A fixed margin is
+  // wrong at both ends: large enough to hide a fifteen-hundred-yard volcano
+  // and it deletes every eight-hundred-yard one on the whole ring, small
+  // enough to keep those and the big ones hang over the water again. What is
+  // being asked is "does any part of this reach the sea", and that depends on
+  // how wide this one is.
+  const openWater = (x, z, w) =>
     OCEAN !== null && OCEAN !== undefined &&
-    (x - WORLD_CX) * OCEAN.seaward.x + (z - WORLD_CZ) * OCEAN.seaward.z > -420;
+    (x - WORLD_CX) * OCEAN.seaward.x + (z - WORLD_CZ) * OCEAN.seaward.z > -w * 0.62;
 
-  // Near ridges are discrete with gaps, so the hazier layers behind show
-  // through them; far ridges are dense and continuous to close the horizon.
-  // Colour carries the depth, not just fog. Each layer steps darker, cooler
-  // and bluer than the last, so the backdrop separates from the warm yellow-
-  // green of the course instead of melting into it. Atmospheric perspective
-  // in hue, deliberate value contrast against the foreground.
-  const LAYERS = [
+  // Three layers, near to far. Colour carries the depth, not just fog: each
+  // step is lighter, cooler and bluer than the one in front, so the backdrop
+  // separates from the warm yellow-green of the course instead of melting into
+  // it. Atmospheric perspective in hue, deliberate value contrast against the
+  // foreground.
+  // An island course has volcanoes behind it, not forest. Fewer of them,
+  // much bigger, and standing further back — the whole point of one is that
+  // it is a long way off and still fills the sky.
+  const LAYERS = COURSE.coastal ? [
+    // Kept inside the fog. The scene fogs out entirely at 2600 yards, so a
+    // volcano standing further back than that is a white cut-out however it is
+    // coloured — and the fog is what tints the backdrop at sunrise and sunset,
+    // so putting the backdrop outside it would freeze the horizon at midday.
+    // Big and near rather than huge and far.
+    { count: 8,  ringR: 820,  top: [260, 400], w: [430, 700],   d: [340, 560],  color: 0x2b4636 },
+    { count: 9,  ringR: 1350, top: [400, 600], w: [660, 1050],  d: [520, 840],  color: 0x33544f },
+    { count: 10, ringR: 1950, top: [560, 860], w: [920, 1500],  d: [720, 1180], color: 0x3f606c },
+  ] : [
     // Cool and clearly darker than the course, but not black: the ramp's
     // shadow band already multiplies these by ~0.48, and the far side of the
     // ring faces away from the sun, so a dark base colour turns the whole
@@ -324,18 +435,18 @@ export function createBackdrop(toonRamp) {
     for (let i = 0; i < L.count; i++) {
       const a = (i / L.count) * Math.PI * 2 + (rnd() - 0.5) * 0.30;
       const r = L.ringR * lerp(0.9, 1.12, rnd());
-      // Drawn from `rnd` before the skip, so removing a ridge never reshuffles
-      // the ones that remain.
-      const skip = openWater(WORLD_CX + Math.sin(a) * r, WORLD_CZ + Math.cos(a) * r);
-      const geo = forestRidgeGeo(
-        rnd,
-        lerp(L.w[0], L.w[1], rnd()),
-        lerp(L.top[0], L.top[1], rnd()),
-        lerp(L.d[0], L.d[1], rnd())
-      );
-      if (skip) { geo.dispose(); continue; }
+      // Every draw from `rnd` happens before the skip, so removing a piece
+      // never reshuffles the ones that remain.
+      const w = lerp(L.w[0], L.w[1], rnd());
+      const top = lerp(L.top[0], L.top[1], rnd());
+      const d = lerp(L.d[0], L.d[1], rnd());
+      const px = WORLD_CX + Math.sin(a) * r;
+      const pz = WORLD_CZ + Math.cos(a) * r;
+      if (openWater(px, pz, w)) continue;
+      const shape = COURSE.coastal ? volcanoGeo : forestRidgeGeo;
+      const geo = shape(rnd, w, top, d);
       place.makeRotationY(a);
-      place.setPosition(WORLD_CX + Math.sin(a) * r, 0, WORLD_CZ + Math.cos(a) * r);
+      place.setPosition(px, 0, pz);
       geo.applyMatrix4(place);
       parts.push(geo);
     }
