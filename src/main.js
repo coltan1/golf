@@ -413,10 +413,22 @@ function beginDrive() {
 function arriveAtBall() {
   cartCtl.setActive(false);
   cart.speed = 0;
-  match?.reportCart(cart);
-  // Left where it was parked. It is the marker for where the last shot was
-  // played from and it is the thing the other player is aiming at.
   refreshShot({ pop: true });
+
+  // Moved clear before the shot rather than left where it stopped.
+  //
+  // Parked at the ball it sat in the middle of the address camera and in the
+  // line of half the swings. The obvious fix — putting it behind the ball — is
+  // the worst place of all, because behind the ball is exactly where the
+  // camera is. So it goes to the side: seven yards along the perpendicular to
+  // the aim, on whichever side it was already nearer, facing down the
+  // fairway.
+  const perp = game.aim + Math.PI / 2;
+  const px = Math.sin(perp), pz = -Math.cos(perp);
+  const side = (cart.pos.x - ball.pos.x) * px + (cart.pos.z - ball.pos.z) * pz >= 0 ? 1 : -1;
+  cart.place(ball.pos.x + px * 7 * side, ball.pos.z + pz * 7 * side, game.aim);
+  match?.reportCart(cart);
+
   game.state = 'ready';
   rig.setMode('address');
   const toPin = distToHole(ball.pos.x, ball.pos.z);
@@ -757,6 +769,7 @@ function frame() {
   if (game.state === 'driving') {
     driveT += dt;
     cart.update(dt, cartCtl.read());
+    cartCtl.setFuel(cart.boost);
     if (match?.active && match.oppCart) {
       const hit = cart.collide(match.oppCart);
       if (hit > 2.2 && time - (game.lastRam ?? -9) > 0.6) {

@@ -39,6 +39,19 @@ const DRAG = 0.9;
 const TURN_SLOW = 2.5;
 const TURN_FAST = 1.25;
 
+// Boost. A shade over half again, which is enough to feel and not so much
+// that the cart becomes a different vehicle you have to relearn.
+const BOOST_MUL = 1.55;
+const BOOST_DRAIN = 0.55;      // full tank lasts a bit under two seconds
+const BOOST_REFILL = 0.24;     // and takes four to come back
+
+// Drift. Holding the button drops the grip and lets the direction of travel
+// lag behind where the nose is pointing; letting go hooks them back together.
+const DRIFT_GRIP = 0.30;       // how fast travel catches up to heading, drifting
+const HOLD_GRIP = 26.0;        // and how fast it does when not — near instant
+const DRIFT_TURN = 1.85;       // the tail comes round faster than the nose
+const DRIFT_SCRUB = 0.62;      // sideways speed you lose per second
+
 // How much of the top speed each surface allows.
 const GRIP = {
   fairway: 1.0, green: 0.92, rough: 0.72, deep: 0.5, sand: 0.42, water: 0.28,
@@ -157,8 +170,20 @@ export class Cart {
     scene.add(this.root);
 
     this.pos = new THREE.Vector3();
-    this.heading = 0;          // radians, 0 = -Z
+    this.heading = 0;          // radians, 0 = -Z — where the nose points
+    // Where the cart is actually travelling.
+    //
+    // Normally welded to the heading: a cart that slides a little all the
+    // time reads as one that is permanently out of control, and the first
+    // version of this looked exactly like that even though nothing was
+    // sliding at all — a body roll on every turn was enough to suggest it.
+    // The two only come apart while the drift button is down.
+    this.travel = 0;
     this.speed = 0;            // yards a second, signed
+    this.boost = 1;            // 0..1 fuel
+    this.boosting = false;
+    this.drifting = false;
+    this.slip = 0;             // |heading - travel|, for the render and the dust
     this.steer = 0;            // -1..1, smoothed
     this.spin = 0;             // wheel rotation, for the render
     this.lean = 0;             // body roll, ditto
@@ -174,6 +199,8 @@ export class Cart {
   place(x, z, heading) {
     this.pos.set(x, heightAt(x, z), z);
     this.heading = heading ?? 0;
+    this.travel = this.heading;
+    this.slip = 0;
     this.speed = 0;
     this.bump.set(0, 0, 0);
     this._apply();
@@ -205,9 +232,19 @@ export class Cart {
 
     const ground = surfaceAt(this.pos.x, this.pos.z);
     const grip = GRIP[ground] ?? 0.8;
-    const top = TOP_SPEED * grip;
 
-    if (th > 0.01) this.speed += ACCEL * grip * th * dt;
+    // Boost: held, and only while there is anything in the tank. It refills
+    // whenever it is not being used, so it is a thing you spend rather than a
+    // thing you run out of for the rest of the hole.
+    this.drifting = !!input?.drift && Math.abs(this.speed) > 2.0;
+    this.boosting = !!input?.boost && this.boost > 0.02 && th > 0;
+    this.boost = clamp(
+      this.boost + (this.boosting ? -BOOST_DRAIN : BOOST_REFILL) * dt, 0, 1
+    );
+    const push = this.boosting ? BOOST_MUL : 1;
+    const top = TOP_SPEED * grip * push;
+
+    if (th > 0.01) this.speed += ACCEL * grip * push * th * dt;
     else if (th < -0.01) this.speed -= (this.speed > 0 ? BRAKE : ACCEL * 0.7) * -th * dt;
     else this.speed -= this.speed * DRAG * dt;
 
@@ -223,11 +260,24 @@ export class Cart {
     // Turn rate falls off with speed, and reverses when reversing, because a
     // cart backing up steers the other way and everyone expects it to.
     const f = Math.min(1, Math.abs(this.speed) / TOP_SPEED);
-    const rate = lerp(TURN_SLOW, TURN_FAST, f);
+    const rate = lerp(TURN_SLOW, TURN_FAST, f) * (this.drifting ? DRIFT_TURN : 1);
     const moving = Math.min(1, Math.abs(this.speed) / 1.2);
     this.heading += this.steer * rate * dt * moving * Math.sign(this.speed || 1);
 
-    const s = Math.sin(this.heading), c = Math.cos(this.heading);
+    // Travel chases heading. The rate is the whole drift model: fast enough
+    // normally that the two are the same number, slow enough on the button
+    // that the cart carries on the way it was going while the nose comes
+    // round. Wrapped to the shortest way, or a cart that crosses due south
+    // spins its travel direction the long way and briefly drives backwards.
+    let d = ((this.heading - this.travel + Math.PI) % (Math.PI * 2)) - Math.PI;
+    if (d < -Math.PI) d += Math.PI * 2;
+    this.travel += d * (1 - Math.exp(-(this.drifting ? DRIFT_GRIP * 12 : HOLD_GRIP) * dt));
+    this.slip = Math.abs(d);
+    // Sliding sideways scrubs speed off, which is what stops a drift being a
+    // free way to go round corners faster than not drifting.
+    if (this.drifting) this.speed -= Math.abs(this.speed) * this.slip * DRIFT_SCRUB * dt;
+
+    const s = Math.sin(this.travel), c = Math.cos(this.travel);
     let nx = this.pos.x + (s * this.speed + this.bump.x) * dt;
     let nz = this.pos.z + (-c * this.speed + this.bump.z) * dt;
     this.bump.multiplyScalar(Math.exp(-3.4 * dt));
@@ -246,9 +296,15 @@ export class Cart {
     this.pos.y = heightAt(nx, nz);
 
     // Cosmetics.
-    this.spin += (this.speed / WHEEL_R) * dt;
-    const want = -this.steer * f * 0.16;
-    this.lean = lerp(this.lean, want, 1 - Math.exp(-8 * dt));
+    this.spin += (this.speed / WHEEL_R) * dt * (this.drifting ? 1.5 : 1);
+    // Barely any roll under normal cornering.
+    //
+    // It was 0.16 and that alone made the cart look permanently sideways —
+    // the eye reads a leaning vehicle as one that is sliding, whether or not
+    // it is. It is nearly flat now, and the big lean is reserved for an actual
+    // drift, where it is telling the truth.
+    const want = -this.steer * f * 0.045 - Math.sign(this.steer || 1) * this.slip * 0.42;
+    this.lean = lerp(this.lean, clamp(want, -0.30, 0.30), 1 - Math.exp(-8 * dt));
     this.pitch = lerp(this.pitch, clamp(-along * 0.6, -0.22, 0.22), 1 - Math.exp(-5 * dt));
     this._apply();
   }
@@ -269,6 +325,7 @@ export class Cart {
     // stationary as far as the maths is concerned, so standing still while
     // somebody drives into you at full pelt did nothing at all.
     this.speed = this.target.v ?? 0;
+    this.travel = this.heading;
     this.spin += this.speed / WHEEL_R * dt;
     this._apply();
   }
@@ -344,10 +401,17 @@ export class Cart {
  */
 export function createCartControls() {
   const keys = new Set();
+  // Shift and space come off `e.key`, which is ' ' for the space bar and the
+  // side-agnostic 'Shift' for either shift key. Reading `code` instead would
+  // mean listing ShiftLeft and ShiftRight and getting it wrong on one layout.
+  const DRIVE = ['w', 'a', 's', 'd',
+    'arrowup', 'arrowdown', 'arrowleft', 'arrowright', ' ', 'shift'];
   const onKey = (e, down) => {
     const k = e.key.toLowerCase();
-    if (['w', 'a', 's', 'd', 'arrowup', 'arrowdown', 'arrowleft', 'arrowright'].includes(k)) {
+    if (DRIVE.includes(k)) {
       if (down) keys.add(k); else keys.delete(k);
+      // Space scrolls the page and shift does nothing, but only swallow them
+      // while actually driving — the swing uses the space bar too.
       if (state.active) e.preventDefault();
     }
   };
@@ -356,14 +420,28 @@ export function createCartControls() {
   // A key held while the window loses focus is a key that never comes up.
   window.addEventListener('blur', () => keys.clear());
 
-  const state = { active: false, touch: { throttle: 0, steer: 0 } };
+  const state = {
+    active: false,
+    touch: { throttle: 0, steer: 0, boost: 0, drift: 0 },
+  };
   const el = buildPad(state);
+  const fuel = el.querySelector('#dFuel');
+  const fuelIn = el.querySelector('#dFuelIn');
 
   return {
     setActive(on) {
       state.active = on;
       el.classList.toggle('on', on);
-      if (!on) { keys.clear(); state.touch.throttle = 0; state.touch.steer = 0; }
+      if (!on) {
+        keys.clear();
+        state.touch.throttle = state.touch.steer = 0;
+        state.touch.boost = state.touch.drift = 0;
+      }
+    },
+    /** Show how much boost is left. Called by the frame loop with the cart. */
+    setFuel(v) {
+      fuelIn.style.transform = `scaleX(${Math.max(0, Math.min(1, v))})`;
+      fuel.classList.toggle('low', v < 0.25);
     },
     read() {
       let throttle = 0, steer = 0;
@@ -374,6 +452,8 @@ export function createCartControls() {
       return {
         throttle: clamp(throttle + state.touch.throttle, -1, 1),
         steer: clamp(steer + state.touch.steer, -1, 1),
+        boost: keys.has('shift') || state.touch.boost > 0,
+        drift: keys.has(' ') || state.touch.drift > 0,
       };
     },
   };
@@ -386,7 +466,7 @@ function buildPad(state) {
       opacity:0;transition:opacity .25s ease}
     #drivePad.on{opacity:1}
     #drivePad .dBtn{
-      position:absolute;bottom:max(26px,env(safe-area-inset-bottom));
+      position:absolute;bottom:calc(env(safe-area-inset-bottom, 0px) + 26px);
       width:74px;height:74px;border-radius:18px;pointer-events:auto;
       display:grid;place-items:center;font-size:26px;font-weight:900;
       color:#fff;text-shadow:0 2px 0 rgba(0,0,0,.35);cursor:pointer;
@@ -395,10 +475,38 @@ function buildPad(state) {
       box-shadow:0 5px 0 rgba(61,39,22,.6),inset 0 2px 0 rgba(255,255,255,.5);
     }
     #drivePad .dBtn.down{transform:translateY(4px);box-shadow:0 1px 0 rgba(61,39,22,.6)}
-    #dLeft{left:22px} #dRight{left:112px}
-    #dRev{right:112px;background:linear-gradient(180deg,#e3945f,#b34627)}
-    #dGo{right:22px;width:88px;height:88px;
+    /* Every one of these is scoped to the pad, and it has to be.
+       The shared rule is "#drivePad .dBtn" — an id plus a class — which
+       outranks a bare "#dGo", so the per-button sizes were being thrown away
+       and every button came out the same 74 square in the same corner. */
+    #drivePad #dLeft{left:22px} #drivePad #dRight{left:112px}
+    #drivePad #dRev{right:112px;background:linear-gradient(180deg,#e3945f,#b34627)}
+    #drivePad #dGo{right:22px;width:88px;height:88px;
       background:linear-gradient(180deg,#9ad966,#4f9330)}
+    /* env() needs its fallback spelled out.
+       Without the second argument the whole calc is invalid wherever the
+       variable is unsupported, which takes the entire bottom declaration with
+       it — and these then fell back to .dBtn's value and stacked on top of
+       the steering buttons. */
+    #drivePad #dDrift{left:22px;bottom:calc(env(safe-area-inset-bottom, 0px) + 114px);
+      width:164px;height:52px;font-size:14px;letter-spacing:1px;
+      background:linear-gradient(180deg,#7fd0ea,#2b86b4)}
+    #drivePad #dBoost{right:22px;bottom:calc(env(safe-area-inset-bottom, 0px) + 124px);
+      width:88px;height:56px;font-size:14px;letter-spacing:1px;
+      background:linear-gradient(180deg,#ffd970,#cf7c0d)}
+    /* The gauge sits on the boost button rather than anywhere else on screen,
+       because it is the only thing it describes and a bar in a corner is one
+       more place to have to look. */
+    #drivePad #dFuel{
+      position:absolute;right:22px;
+      bottom:calc(env(safe-area-inset-bottom, 0px) + 188px);
+      width:88px;height:11px;border-radius:6px;overflow:hidden;
+      border:3px solid var(--ink);background:rgba(30,20,10,.55);
+    }
+    #drivePad #dFuelIn{height:100%;width:100%;transform-origin:left center;
+      background:linear-gradient(180deg,#ffe08a,#f0961a);
+      transition:opacity .2s}
+    #drivePad #dFuel.low #dFuelIn{background:linear-gradient(180deg,#f0a0a0,#c0392b)}
   `;
   document.head.appendChild(style);
 
@@ -408,7 +516,10 @@ function buildPad(state) {
     <div class="dBtn" id="dLeft">◀</div>
     <div class="dBtn" id="dRight">▶</div>
     <div class="dBtn" id="dRev">▼</div>
-    <div class="dBtn" id="dGo">▲</div>`;
+    <div class="dBtn" id="dGo">▲</div>
+    <div class="dBtn" id="dDrift">DRIFT</div>
+    <div class="dBtn" id="dBoost">BOOST</div>
+    <div id="dFuel"><div id="dFuelIn"></div></div>`;
   document.body.appendChild(pad);
 
   const hold = (id, set) => {
@@ -426,6 +537,8 @@ function buildPad(state) {
   hold('dRev', (v) => { state.touch.throttle = v === 0 ? 0 : -1; });
   hold('dLeft', (v) => { state.touch.steer = v === 0 ? 0 : -1; });
   hold('dRight', (v) => { state.touch.steer = v === 0 ? 0 : 1; });
+  hold('dBoost', (v) => { state.touch.boost = v === 0 ? 0 : 1; });
+  hold('dDrift', (v) => { state.touch.drift = v === 0 ? 0 : 1; });
 
   return pad;
 }
