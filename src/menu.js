@@ -1,15 +1,22 @@
 /**
- * menu.js — the front screen.
+ * menu.js — the lobby.
  *
- * Your golfer on the left, the round you are about to play on the right.
+ * Four full screens rather than one panel with tabs: Home, Customise, Solo,
+ * Multiplayer. Each fills the window and you move between them with a back
+ * arrow. Tabs were fine while there were two short lists; a customise screen
+ * with forty swatches on it is not something to squeeze into a sidebar, and a
+ * half-page card surrounded by empty gradient was never using the space it had.
  *
- * The preview has its own renderer, scene and light rather than borrowing the
- * game's. That costs a second WebGL context and is worth it: the game's scene
- * is a whole golf course whose lighting is tuned for a course, and posing a
- * figure inside it would mean either building the world before the menu (slow,
- * and the menu exists partly to cover that) or lighting the menu with whatever
- * the course happens to have. A tiny scene with one key light and a turntable
- * is independent of all of it.
+ * The golfer preview has its own renderer, scene and light rather than
+ * borrowing the game's. That costs a second WebGL context and is worth it: the
+ * game's scene is a whole golf course whose lighting is tuned for a course, and
+ * posing a figure inside it would mean either building the world before the
+ * menu (slow, and the menu exists partly to cover that) or lighting the menu
+ * with whatever the course happens to have. A tiny scene with one key light and
+ * a turntable is independent of all of it.
+ *
+ * There is one preview canvas, moved between the screens that want it, because
+ * two WebGL contexts for the same figure is one too many.
  */
 
 import * as THREE from 'three';
@@ -20,122 +27,127 @@ import { TIMES } from './scenery.js';
 
 const css = `
 #menu{
-  position:fixed;inset:0;z-index:60;display:grid;place-items:center;
+  position:fixed;inset:0;z-index:60;overflow:hidden;
   background:linear-gradient(170deg,#bfe4f7 0%,#dff1f8 46%,#e9f5ec 100%);
-  transition:opacity .45s ease;
+  transition:opacity .4s ease;
+  font-variant-numeric:tabular-nums;
 }
 #menu.hide{opacity:0;pointer-events:none}
-#menuInner{
-  display:flex;gap:34px;align-items:stretch;
-  width:min(880px,calc(100vw - 40px));max-height:calc(100vh - 40px);
-  transition:transform .3s cubic-bezier(.22,1,.36,1);
+
+.screen{
+  position:absolute;inset:0;display:none;flex-direction:column;
+  padding:22px max(22px,calc((100vw - 1040px)/2)) 26px;overflow-y:auto;
 }
-/* The kit panel is docked to the right edge; slide out from under it so the
-   golfer you are dressing stays in sight while you dress him. */
-#menu.withKit #menuInner{transform:translateX(-152px)}
-@media (max-width:1000px){#menu.withKit #menuInner{transform:none}}
-#menuLeft{display:flex;flex-direction:column;align-items:center;gap:14px;flex:0 0 268px}
-#previewWrap{
-  /* flex:none, or the flex parent shrinks it — down the main axis on mobile,
-     where it collapsed to a sliver. */
-  width:268px;height:330px;flex:none;border-radius:24px;overflow:hidden;position:relative;
-  background:linear-gradient(180deg,rgba(255,255,255,.55),rgba(255,255,255,.2));
-  border:1px solid rgba(255,255,255,.7);box-shadow:0 14px 36px rgba(25,70,95,.16);
+.screen.on{display:flex}
+.screen.on > *{animation:menuIn .34s cubic-bezier(.22,1,.36,1) both}
+@keyframes menuIn{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:none}}
+
+.sHead{display:flex;align-items:center;gap:12px;margin-bottom:20px;flex:none}
+.sBack{
+  width:38px;height:38px;flex:none;border:none;font:inherit;font-size:17px;font-weight:800;
+  border-radius:50%;cursor:pointer;color:#26424f;background:rgba(255,255,255,.72);
+  border:1px solid rgba(40,70,90,.14);display:grid;place-items:center;
 }
+.sBack:active{transform:scale(.92)}
+.sTitle{font-size:27px;font-weight:800;letter-spacing:-.5px;margin:0}
+.sSub{font-size:12.5px;font-weight:700;opacity:.5;margin-top:2px}
+
+/* ---------- home ---------- */
+#home{align-items:center;justify-content:center;text-align:center}
+#homeTitle{font-size:44px;font-weight:800;letter-spacing:-1.2px;margin:0}
+#homeSub{font-size:13px;font-weight:700;opacity:.5;margin:2px 0 14px}
+#homeStage{
+  width:min(300px,72vw);height:min(340px,42vh);border-radius:26px;overflow:hidden;
+  background:linear-gradient(180deg,rgba(255,255,255,.55),rgba(255,255,255,.18));
+  border:1px solid rgba(255,255,255,.7);box-shadow:0 16px 40px rgba(25,70,95,.16);
+  flex:none;
+}
+#homeName{
+  width:min(300px,72vw);margin-top:14px;text-align:center;font:inherit;font-size:15px;
+  font-weight:800;padding:10px 12px;border-radius:999px;
+  border:1px solid rgba(40,70,90,.18);background:rgba(255,255,255,.72);color:#22333d;
+}
+#homeName:focus{outline:2px solid rgba(70,150,110,.5);outline-offset:1px}
+#homeBtns{display:flex;gap:10px;margin-top:16px;flex-wrap:wrap;justify-content:center;
+  width:min(420px,88vw)}
+#homeBtns .bigBtn{flex:1 1 160px;margin:0}
+
+/* ---------- customise ---------- */
+#custBody{display:flex;gap:26px;flex:1;min-height:0}
+#custStage{
+  /* Capped rather than stretched: the preview frames to fit, so a stage the
+     full height of a desktop window just pushes the golfer far away. */
+  flex:0 0 340px;border-radius:24px;overflow:hidden;align-self:flex-start;
+  height:min(560px,calc(100vh - 130px));min-height:320px;
+  background:linear-gradient(180deg,rgba(255,255,255,.55),rgba(255,255,255,.18));
+  border:1px solid rgba(255,255,255,.7);box-shadow:0 16px 40px rgba(25,70,95,.16);
+}
+#custOpts{
+  flex:1;min-width:0;overflow-y:auto;padding:18px 20px;border-radius:24px;
+  background:rgba(255,255,255,.62);border:1px solid rgba(255,255,255,.8);
+  box-shadow:0 16px 40px rgba(25,70,95,.14);
+}
+#previewWrap{width:100%;height:100%}
 #previewWrap canvas{width:100%;height:100%;display:block}
-#menuName{
-  width:100%;text-align:center;font:inherit;font-size:15px;font-weight:800;
-  padding:9px 12px;border-radius:999px;border:1px solid rgba(40,70,90,.18);
-  background:rgba(255,255,255,.72);color:#22333d;
-}
-#menuName:focus{outline:2px solid rgba(70,150,110,.5);outline-offset:1px}
 
-#menuRight{
-  flex:1;min-width:0;display:flex;flex-direction:column;
-  background:rgba(255,255,255,.68);border:1px solid rgba(255,255,255,.8);
-  border-radius:26px;box-shadow:0 18px 46px rgba(25,70,95,.18);
-  backdrop-filter:blur(14px) saturate(1.15);-webkit-backdrop-filter:blur(14px) saturate(1.15);
-  padding:18px 20px 20px;overflow:hidden;
-}
-#menuTitle{font-size:26px;font-weight:800;letter-spacing:-.4px;margin:0 0 2px}
-#menuSub{font-size:12.5px;font-weight:700;opacity:.5;margin-bottom:14px}
-
-#tabs{display:flex;gap:6px;margin-bottom:14px}
-.tab{
-  flex:1;text-align:center;font-size:13px;font-weight:800;padding:9px 10px;
-  border-radius:12px;cursor:pointer;background:rgba(255,255,255,.55);
-  border:1px solid rgba(40,70,90,.14);
-}
-.tab.on{background:#2f7d55;color:#fff;border-color:#2f7d55}
-
-#panes{flex:1;min-height:0;overflow-y:auto;padding-right:4px}
-.pane{display:none}
-.pane.on{display:block}
-.mLabel{font-size:11px;font-weight:800;opacity:.5;letter-spacing:.4px;margin:14px 0 7px}
+/* ---------- shared bits ---------- */
+.mLabel{font-size:11px;font-weight:800;opacity:.5;letter-spacing:.4px;margin:18px 0 8px}
 .mLabel:first-child{margin-top:0}
-
-.cards{display:flex;gap:8px;flex-wrap:wrap}
+.cards{display:flex;gap:10px;flex-wrap:wrap}
 .card{
-  flex:1 1 190px;text-align:left;padding:11px 13px;border-radius:14px;cursor:pointer;
-  background:rgba(255,255,255,.6);border:1.5px solid rgba(40,70,90,.14);
+  flex:1 1 260px;text-align:left;padding:14px 16px;border-radius:16px;cursor:pointer;
+  background:rgba(255,255,255,.62);border:1.5px solid rgba(40,70,90,.14);
 }
 .card.on{border-color:#2f7d55;background:rgba(47,125,85,.10)}
-.card b{display:block;font-size:14px;font-weight:800;margin-bottom:2px}
-.card span{font-size:11.5px;font-weight:600;opacity:.6;line-height:1.35;display:block}
-
-.chips{display:flex;gap:6px;flex-wrap:wrap}
+.card b{display:block;font-size:15px;font-weight:800;margin-bottom:3px}
+.card span{font-size:12px;font-weight:600;opacity:.6;line-height:1.4;display:block}
+.chips{display:flex;gap:7px;flex-wrap:wrap}
 .chip{
-  font-size:12.5px;font-weight:800;padding:8px 14px;border-radius:999px;cursor:pointer;
-  background:rgba(255,255,255,.6);border:1px solid rgba(40,70,90,.14);
+  font-size:13px;font-weight:800;padding:9px 17px;border-radius:999px;cursor:pointer;
+  background:rgba(255,255,255,.62);border:1px solid rgba(40,70,90,.14);
 }
 .chip.on{background:#2b3a44;color:#fff;border-color:#2b3a44}
 
 .bigBtn{
-  width:100%;margin-top:18px;border:none;font:inherit;font-weight:800;font-size:15px;
+  width:100%;margin-top:20px;border:none;font:inherit;font-weight:800;font-size:15px;
   color:#fff;background:linear-gradient(180deg,#63c46f,#48ab5b);
-  padding:14px 20px;border-radius:16px;cursor:pointer;
+  padding:15px 20px;border-radius:16px;cursor:pointer;
   box-shadow:0 10px 24px rgba(60,150,90,.34);
-  transition:transform .2s cubic-bezier(.22,1,.36,1),box-shadow .2s;
+  transition:transform .2s cubic-bezier(.22,1,.36,1);
 }
 .bigBtn:hover{transform:translateY(-1px)}
 .bigBtn:active{transform:scale(.98)}
-.bigBtn.ghost{background:rgba(255,255,255,.7);color:#26424f;box-shadow:none;
-  border:1px solid rgba(40,70,90,.16);margin-top:8px}
+.bigBtn.ghost{background:rgba(255,255,255,.72);color:#26424f;box-shadow:none;
+  border:1px solid rgba(40,70,90,.16);margin-top:10px}
 
-#lobbies{margin-top:4px;display:flex;flex-direction:column;gap:6px;
-  max-height:190px;overflow-y:auto}
+#lobbies{margin-top:4px;display:flex;flex-direction:column;gap:7px}
 .lobby{
-  display:flex;align-items:center;justify-content:space-between;gap:10px;
-  padding:9px 12px;border-radius:12px;background:rgba(255,255,255,.62);
+  display:flex;align-items:center;justify-content:space-between;gap:12px;
+  padding:12px 15px;border-radius:14px;background:rgba(255,255,255,.65);
   border:1px solid rgba(40,70,90,.12);
 }
-.lobby .who{font-size:13px;font-weight:800}
-.lobby .what{font-size:11px;font-weight:700;opacity:.55}
+.lobby .who{font-size:14px;font-weight:800}
+.lobby .what{font-size:11.5px;font-weight:700;opacity:.55}
 .lobby button{
-  border:none;font:inherit;font-weight:800;font-size:12px;color:#fff;cursor:pointer;
-  background:#2f7d55;padding:7px 14px;border-radius:999px;
+  border:none;font:inherit;font-weight:800;font-size:13px;color:#fff;cursor:pointer;
+  background:#2f7d55;padding:9px 19px;border-radius:999px;
 }
-#lobbyNone{font-size:12.5px;font-weight:700;opacity:.45;padding:10px 2px}
-#mpNote{font-size:11.5px;font-weight:700;opacity:.5;margin-top:10px;line-height:1.45}
-#mpLive{font-size:12.5px;font-weight:800;color:#2f7d55;margin-top:10px;min-height:16px}
+#lobbyNone{font-size:13px;font-weight:700;opacity:.45;padding:12px 2px}
+#mpNote{font-size:12px;font-weight:700;opacity:.5;margin-top:14px;line-height:1.5}
+#mpLive{font-size:13px;font-weight:800;color:#2f7d55;margin-top:12px;min-height:17px}
 
-@media (max-width:760px){
-  #menuInner{flex-direction:column;gap:14px;overflow-y:auto;padding:4px 0}
-  #menuLeft{flex:none;gap:10px}
-  #previewWrap{width:152px;height:188px}
-  #menuRight{padding:16px 16px 18px;border-radius:22px}
-  #menuTitle{font-size:22px}
-  #menuSub{margin-bottom:12px}
+@media (max-width:820px){
+  .screen{padding:16px 16px 22px}
+  .sTitle{font-size:23px}
+  #homeTitle{font-size:34px}
+  #custBody{flex-direction:column;gap:14px}
+  #custStage{flex:none;height:34vh;min-height:200px}
+  #custOpts{flex:none;overflow:visible;padding:16px}
   .card{flex:1 1 100%}
-  .bigBtn{padding:13px 18px}
-  /* One scrolling region, not two nested ones — otherwise Start round sits
-     below the fold of an inner scroller nobody knows is there. */
-  #menuRight,#panes{overflow:visible}
-  #lobbies{max-height:none}
 }
 `;
 
-export function createMenu({ getLook, getName, onCustomise, onStart, onHost, onQuick, onJoin, onBrowse }) {
+export function createMenu({ getLook, getName, buildKit, onStart, onHost, onQuick, onJoin, onBrowse }) {
   const style = document.createElement('style');
   style.textContent = css;
   document.head.appendChild(style);
@@ -143,69 +155,107 @@ export function createMenu({ getLook, getName, onCustomise, onStart, onHost, onQ
   const root = document.createElement('div');
   root.id = 'menu';
   root.innerHTML = `
-    <div id="menuInner">
-      <div id="menuLeft">
-        <div id="previewWrap"></div>
-        <button class="bigBtn ghost" id="btnCustomise">Customise golfer</button>
-        <input id="menuName" maxlength="18" placeholder="Your name">
+    <div class="screen on" id="home">
+      <h1 id="homeTitle">Sunny Links</h1>
+      <div id="homeSub">Arcade golf, one hole at a time.</div>
+      <div id="homeStage"></div>
+      <input id="homeName" maxlength="18" placeholder="Your name">
+      <div id="homeBtns">
+        <button class="bigBtn" data-go="solo">Solo</button>
+        <button class="bigBtn" data-go="mp">Multiplayer</button>
+        <button class="bigBtn ghost" data-go="cust" style="flex:1 1 100%">Customise golfer</button>
       </div>
-      <div id="menuRight">
-        <h1 id="menuTitle">Sunny Links</h1>
-        <div id="menuSub">Pick a course, pick your light, and play.</div>
-        <div id="tabs">
-          <div class="tab on" data-tab="solo">Solo</div>
-          <div class="tab" data-tab="mp">Multiplayer</div>
-        </div>
-        <div id="panes">
-          <div class="pane on" data-pane="solo">
-            <div class="mLabel">COURSE</div>
-            <div class="cards" id="soloCourses"></div>
-            <div class="mLabel">TIME OF DAY</div>
-            <div class="chips" id="soloTimes"></div>
-            <button class="bigBtn" id="btnSolo">Start round</button>
-          </div>
-          <div class="pane" data-pane="mp">
-            <div class="mLabel">COURSE</div>
-            <div class="cards" id="mpCourses"></div>
-            <div class="mLabel">TIME OF DAY</div>
-            <div class="chips" id="mpTimes"></div>
-            <div class="mLabel">OPEN LOBBIES</div>
-            <div id="lobbies"><div id="lobbyNone">Looking…</div></div>
-            <div id="mpLive"></div>
-            <button class="bigBtn" id="btnHost">Create lobby</button>
-            <button class="bigBtn ghost" id="btnQuick">Quick match instead</button>
-            <div id="mpNote">Whoever creates the lobby picks the course and the
-              light — joining adopts theirs, so you both play the same round.</div>
-          </div>
-        </div>
+    </div>
+
+    <div class="screen" id="cust">
+      <div class="sHead">
+        <button class="sBack" data-go="home">←</button>
+        <div><h2 class="sTitle">Customise</h2>
+          <div class="sSub">Changes save, and your opponent sees them.</div></div>
       </div>
+      <div id="custBody">
+        <div id="custStage"></div>
+        <div id="custOpts"></div>
+      </div>
+    </div>
+
+    <div class="screen" id="solo">
+      <div class="sHead">
+        <button class="sBack" data-go="home">←</button>
+        <div><h2 class="sTitle">Solo round</h2>
+          <div class="sSub">Just you and the course.</div></div>
+      </div>
+      <div class="mLabel">COURSE</div>
+      <div class="cards" id="soloCourses"></div>
+      <div class="mLabel">TIME OF DAY</div>
+      <div class="chips" id="soloTimes"></div>
+      <button class="bigBtn" id="btnSolo">Start round</button>
+    </div>
+
+    <div class="screen" id="mp">
+      <div class="sHead">
+        <button class="sBack" data-go="home">←</button>
+        <div><h2 class="sTitle">Multiplayer</h2>
+          <div class="sSub">Alternating shots — you watch them play theirs.</div></div>
+      </div>
+      <div class="mLabel">COURSE</div>
+      <div class="cards" id="mpCourses"></div>
+      <div class="mLabel">TIME OF DAY</div>
+      <div class="chips" id="mpTimes"></div>
+      <div class="mLabel">OPEN LOBBIES</div>
+      <div id="lobbies"><div id="lobbyNone">Looking…</div></div>
+      <div id="mpLive"></div>
+      <button class="bigBtn" id="btnHost">Create lobby</button>
+      <button class="bigBtn ghost" id="btnQuick">Quick match instead</button>
+      <div id="mpNote">Whoever creates the lobby picks the course and the light —
+        joining adopts theirs, so you both play the same round.</div>
     </div>`;
   document.body.appendChild(root);
 
-  // ---------------------------------------------------------- choices
-  const state = { course: COURSES[0].id, time: 'day', tab: 'solo' };
+  const $ = (id) => root.querySelector('#' + id);
 
-  const buildCards = (host, onPick) => {
+  // ---------------------------------------------------------- screens
+  const screens = [...root.querySelectorAll('.screen')];
+  let at = 'home';
+
+  const go = (id) => {
+    at = id;
+    screens.forEach((s) => s.classList.toggle('on', s.id === id));
+    // The preview belongs to whichever screen is showing it, and only one of
+    // them can hold it at a time.
+    if (id === 'home') $('homeStage').appendChild(wrap);
+    else if (id === 'cust') $('custStage').appendChild(wrap);
+    if (id === 'home' || id === 'cust') { fit(); rebuild(getLook()); }
+    // Only reach for the network when someone actually asks for it.
+    if (id === 'mp') onBrowse?.();
+  };
+
+  root.querySelectorAll('[data-go]').forEach((b) => { b.onclick = () => go(b.dataset.go); });
+
+  // ---------------------------------------------------------- choices
+  const state = { course: COURSES[0].id, time: 'day' };
+
+  const buildCards = (host) => {
     host.innerHTML = '';
     const made = COURSES.map((c) => {
       const el = document.createElement('div');
       el.className = 'card';
       el.innerHTML = `<b>${c.name}</b><span>${c.holes.length} holes · par ${
         c.holes.reduce((s, h) => s + h.par, 0)}<br>${c.blurb}</span>`;
-      el.onclick = () => { state.course = c.id; onPick(); };
+      el.onclick = () => { state.course = c.id; refresh(); };
       host.appendChild(el);
       return { el, id: c.id };
     });
     return () => made.forEach((m) => m.el.classList.toggle('on', m.id === state.course));
   };
 
-  const buildTimes = (host, onPick) => {
+  const buildTimes = (host) => {
     host.innerHTML = '';
     const made = Object.entries(TIMES).map(([key, t]) => {
       const el = document.createElement('div');
       el.className = 'chip';
       el.textContent = t.label;
-      el.onclick = () => { state.time = key; onPick(); };
+      el.onclick = () => { state.time = key; refresh(); };
       host.appendChild(el);
       return { el, key };
     });
@@ -214,31 +264,14 @@ export function createMenu({ getLook, getName, onCustomise, onStart, onHost, onQ
 
   const refreshers = [];
   const refresh = () => refreshers.forEach((f) => f());
-  const $ = (id) => root.querySelector('#' + id);
-
-  refreshers.push(buildCards($('soloCourses'), refresh));
-  refreshers.push(buildTimes($('soloTimes'), refresh));
-  refreshers.push(buildCards($('mpCourses'), refresh));
-  refreshers.push(buildTimes($('mpTimes'), refresh));
+  refreshers.push(buildCards($('soloCourses')), buildTimes($('soloTimes')),
+                  buildCards($('mpCourses')), buildTimes($('mpTimes')));
   refresh();
-
-  // ---------------------------------------------------------- tabs
-  const tabs = [...root.querySelectorAll('.tab')];
-  const panes = [...root.querySelectorAll('.pane')];
-  tabs.forEach((t) => {
-    t.onclick = () => {
-      state.tab = t.dataset.tab;
-      tabs.forEach((x) => x.classList.toggle('on', x === t));
-      panes.forEach((p) => p.classList.toggle('on', p.dataset.pane === state.tab));
-      // Only reach for the network when someone actually asks for it.
-      if (state.tab === 'mp') onBrowse?.();
-    };
-  });
 
   // ---------------------------------------------------------- name
   // Seeded from the same place the match reads it, so what you see here is
   // what an opponent sees — including the one the game made up for you.
-  const nameEl = $('menuName');
+  const nameEl = $('homeName');
   nameEl.value = getName?.() ?? '';
   const readName = () => nameEl.value.trim() || 'Player';
   nameEl.oninput = () => {
@@ -246,18 +279,18 @@ export function createMenu({ getLook, getName, onCustomise, onStart, onHost, onQ
   };
 
   // ---------------------------------------------------------- preview
-  const wrap = $('previewWrap');
+  const wrap = document.createElement('div');
+  wrap.id = 'previewWrap';
+  $('homeStage').appendChild(wrap);
+
   const preview = new THREE.WebGLRenderer({ antialias: true, alpha: true });
   preview.setPixelRatio(Math.min(window.devicePixelRatio, 2));
-  preview.setSize(wrap.clientWidth, wrap.clientHeight, false);
   preview.shadowMap.enabled = false;
   preview.toneMapping = THREE.NoToneMapping;
   wrap.appendChild(preview.domElement);
 
   const pScene = new THREE.Scene();
-  const pCam = new THREE.PerspectiveCamera(34, wrap.clientWidth / wrap.clientHeight, 0.1, 40);
-  pCam.position.set(0, 1.05, 3.5);
-  pCam.lookAt(0, 0.86, 0);
+  const pCam = new THREE.PerspectiveCamera(34, 1, 0.1, 40);
   pScene.add(new THREE.HemisphereLight(0xdcefff, 0x9ec489, 1.5));
   const key = new THREE.DirectionalLight(0xfff2da, 1.9);
   key.position.set(-3, 4, 3.4);
@@ -280,6 +313,7 @@ export function createMenu({ getLook, getName, onCustomise, onStart, onHost, onQ
   const mid = new THREE.Vector3();
 
   const rebuild = (look) => {
+    if (!wrap.clientWidth) return;
     if (figure) centre.remove(figure.root);
     figure = new Golfer(ramp, look);
     figure.forceIdle();
@@ -312,27 +346,33 @@ export function createMenu({ getLook, getName, onCustomise, onStart, onHost, onQ
     pCam.position.set(0, size.y * 0.55, dist);
     pCam.lookAt(0, size.y * 0.5, 0);
   };
+
+  const fit = () => {
+    const w = wrap.clientWidth, h = wrap.clientHeight;
+    if (!w || !h) return;
+    preview.setSize(w, h, false);
+    pCam.aspect = w / h;
+    pCam.updateProjectionMatrix();
+  };
+  fit();
   rebuild(getLook());
+  window.addEventListener('resize', () => { fit(); rebuild(getLook()); });
 
   let t = 0, raf = 0;
   const tick = () => {
     raf = requestAnimationFrame(tick);
-    if (root.classList.contains('hide')) return;
+    // Nothing to draw unless a screen with the stage on it is up.
+    if (root.classList.contains('hide') || (at !== 'home' && at !== 'cust')) return;
+    if (!figure) { fit(); rebuild(getLook()); return; }
     t += 1 / 60;
     turn.rotation.y = 0.55 + Math.sin(t * 0.35) * 0.42;
-    figure?.update(1 / 60, t);
+    figure.update(1 / 60, t);
     preview.render(pScene, pCam);
   };
   tick();
 
-  const fit = () => {
-    if (!wrap.clientWidth) return;
-    preview.setSize(wrap.clientWidth, wrap.clientHeight, false);
-    pCam.aspect = wrap.clientWidth / wrap.clientHeight;
-    pCam.updateProjectionMatrix();
-    rebuild(getLook());   // the framing distance depends on the aspect
-  };
-  window.addEventListener('resize', fit);
+  // ---------------------------------------------------------- kit controls
+  buildKit?.($('custOpts'));
 
   // ---------------------------------------------------------- lobbies
   const lobbyHost = $('lobbies');
@@ -349,7 +389,7 @@ export function createMenu({ getLook, getName, onCustomise, onStart, onHost, onQ
       const course = COURSES.find((c) => c.id === l.course);
       const el = document.createElement('div');
       el.className = 'lobby';
-      el.innerHTML = `<div><div class="who"></div><div class="what"></div></div>`;
+      el.innerHTML = '<div><div class="who"></div><div class="what"></div></div>';
       el.querySelector('.who').textContent = l.name;
       el.querySelector('.what').textContent =
         `${course?.name ?? 'Unknown course'} · ${TIMES[l.time]?.label ?? 'Day'}`;
@@ -362,24 +402,20 @@ export function createMenu({ getLook, getName, onCustomise, onStart, onHost, onQ
   };
 
   // ---------------------------------------------------------- buttons
-  $('btnCustomise').onclick = () => onCustomise?.();
-  $('btnSolo').onclick = () => onStart?.({ ...state, name: readName() });
-  $('btnHost').onclick = () => onHost?.({ course: state.course, time: state.time, name: readName() });
-  $('btnQuick').onclick = () => onQuick?.({ course: state.course, time: state.time, name: readName() });
-
-  const openTab = (which) => tabs.find((t) => t.dataset.tab === which)?.click();
+  const round = () => ({ course: state.course, time: state.time, name: readName() });
+  $('btnSolo').onclick = () => onStart?.(round());
+  $('btnHost').onclick = () => onHost?.(round());
+  $('btnQuick').onclick = () => onQuick?.(round());
 
   return {
-    show(tab) {
+    show(screen) {
       root.classList.remove('hide');
-      fit();
-      rebuild(getLook());
-      if (tab) openTab(tab);
+      go(screen ?? 'home');
     },
     hide() { root.classList.add('hide'); },
     get visible() { return !root.classList.contains('hide'); },
     /**
-     * Re-dress the preview after the kit panel changes something. setLook
+     * Re-dress the preview after the kit controls change something. setLook
      * rather than rebuild: a swatch click is one colour, and rebuilding the
      * whole figure for it would also re-run the framing on every drag of a
      * colour picker.

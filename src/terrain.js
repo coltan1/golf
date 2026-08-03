@@ -13,6 +13,7 @@
  */
 
 import * as THREE from 'three';
+import { COURSE } from './courses.js';
 import {
   WORLD_SIZE, WORLD_CX, WORLD_CZ, WATER_Y, POND, CREEK, MOW_PERIOD,
   SURFACE_COLORS, heightAt, makeCourseTexture, nearest, fairwayHalfWidth, greenEdge,
@@ -214,6 +215,8 @@ export function createTerrain(renderer, toonRamp, treeMap) {
     shader.uniforms.uCollar = { value: colorUniform(SURFACE_COLORS.collar) };
     shader.uniforms.uGreen  = { value: colorUniform(SURFACE_COLORS.greenA) };
     shader.uniforms.uSand   = { value: colorUniform(SURFACE_COLORS.sand) };
+    // Pine straw is what falls off pines. A palm drops fronds on sand.
+    shader.uniforms.uStrawAmt = { value: COURSE.palms ? 0 : 1 };
     shader.uniforms.uStraw  = { value: colorUniform(SURFACE_COLORS.straw) };
     shader.uniforms.uStrawB = { value: colorUniform(SURFACE_COLORS.strawAlt) };
     // Where the trees actually stand, so the beds can sit under them.
@@ -313,6 +316,7 @@ export function createTerrain(renderer, toonRamp, treeMap) {
         uniform vec3 uFairB;
         uniform vec3 uCollar;
         uniform vec3 uGreen;
+        uniform float uStrawAmt;
         uniform vec3 uStraw;
         uniform vec3 uStrawB;
         uniform sampler2D uTreeMap;
@@ -457,7 +461,7 @@ export function createTerrain(renderer, toonRamp, treeMap) {
           vec2 tuv = (vWorld - uTreeOrg.xy) / uTreeOrg.z;
           float canopy = texture2D(uTreeMap, tuv).r * uHasTrees;
           float strawReach = smoothstep(0.10, 0.40, canopy) * smoothstep(-2.0, -8.0, fe);
-          float strawM = strawReach
+          float strawM = uStrawAmt * strawReach
                        * smoothstep(0.40, 0.58, strawN + strawReach * 0.26)
                        * offGreen * offSand;
           vec3 strawCol = mix(uStraw, uStrawB, ccNoise(vWorld * 0.85));

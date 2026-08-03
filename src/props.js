@@ -101,6 +101,53 @@ function makePineGeo(coarse = false) {
  * "somewhere a tree is allowed" and "somewhere a tree is" are very different
  * regions, and straw spread over the first covers a lot of open rough.
  */
+/**
+ * One palm frond: a tapered blade that arcs away and droops at the tip.
+ *
+ * A strip of quads rather than a cone or a squashed sphere, because a frond is
+ * the one part of a palm the eye actually reads. Eight triangles at full
+ * detail, and there are seven or eight of them per tree, so a palm costs about
+ * as much as one broadleaf canopy blob.
+ */
+function makeFrondGeo(coarse = false) {
+  const seg = coarse ? 4 : 7;
+  const pos = [];
+  const idx = [];
+  for (let i = 0; i <= seg; i++) {
+    const t = i / seg;
+    // Droop is quadratic, so the blade leaves the crown almost straight and
+    // falls away at the tip — a linear droop reads as a bent stick.
+    const y = -0.46 * t * t;
+    // Widest around a third of the way out, pinched to a point at the tip.
+    const w = 0.185 * Math.sin(Math.PI * Math.min(1, t * 1.1)) + 0.012;
+    pos.push(t, y, -w, t, y, w);
+  }
+  for (let i = 0; i < seg; i++) {
+    const a = i * 2;
+    idx.push(a, a + 2, a + 1, a + 1, a + 2, a + 3);
+  }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  g.setIndex(idx);
+  g.computeVertexNormals();
+  return g;
+}
+
+/** A shell: half an ellipsoid with a few ribs, small enough to be a suggestion. */
+function makeShellGeo() {
+  const g = new THREE.SphereGeometry(0.5, 9, 5, 0, Math.PI * 2, 0, Math.PI * 0.5);
+  const p = g.attributes.position;
+  for (let i = 0; i < p.count; i++) {
+    const x = p.getX(i), y = p.getY(i), z = p.getZ(i);
+    const a = Math.atan2(z, x);
+    // Ribs, and a taper toward one end, so it is a scallop rather than a dome.
+    const rib = 1 + Math.cos(a * 7) * 0.07;
+    p.setXYZ(i, x * rib * (1 + z * 0.35), y * 0.42, z * rib);
+  }
+  g.computeVertexNormals();
+  return g;
+}
+
 const TMAP = 512;
 let treeMap = null;            // Uint8Array, TMAP × TMAP
 let treeTex = null;            // the same data, for the terrain shader
@@ -211,10 +258,21 @@ const SPECIES = [
   { key: 'maple', weight: 0.05 },
 ];
 
+// Where palms grow, they are the whole treeline. Mixing them into the parkland
+// species list gave a pine forest with palms in it, which is neither place.
+const PALM_SPECIES = [
+  { key: 'palm', weight: 0.82 },
+  { key: 'young', weight: 0.12 },
+  { key: 'broadleaf', weight: 0.06 },
+];
+
 function pickSpecies(r) {
   let acc = 0;
-  for (const s of SPECIES) { acc += s.weight; if (r <= acc) return s.key; }
-  return 'pine';
+  for (const s of (COURSE.palms ? PALM_SPECIES : SPECIES)) {
+    acc += s.weight;
+    if (r <= acc) return s.key;
+  }
+  return COURSE.palms ? 'palm' : 'pine';
 }
 
 export function createTrees(toonRamp) {
@@ -226,6 +284,8 @@ export function createTrees(toonRamp) {
   const pines = [];    // { x,y,z, s, sy, rot, lean, hsl }
   const blobs = [];    // { x,y,z, s, squash, rot, hsl }
   const shrubs = [];   // { x,y,z, sx, sy, rot, hsl }
+  const fronds = [];   // { x,y,z, len, yaw, pitch, hsl } — palms only
+  const shells = [];   // { x,y,z, s, rot, hsl } — beaches only
 
   const plant = (x, z, sizeScale, far = false) => {
     if (!plantable(x, z)) return;
@@ -247,6 +307,47 @@ export function createTrees(toonRamp) {
         rot: rnd() * Math.PI * 2, lean: rnd(),
         hsl: [lerp(0.30, 0.36, rnd()), lerp(0.34, 0.50, rnd()), lerp(0.13, 0.21, rnd())],
       });
+      return;
+    }
+
+    if (kind === 'palm') {
+      // Tall, thin, and leaning — a palm that stands to attention looks like a
+      // lamp post. The lean is baked into the trunk's tilt and the crown is
+      // offset to match, so the fronds sit on top of the trunk rather than
+      // beside it.
+      const trunkH = lerp(9, 15, rnd()) * k;
+      const lean = lerp(-0.16, 0.16, rnd());
+      const face = rnd() * Math.PI * 2;
+      const dx = Math.sin(face) * Math.sin(lean) * trunkH * 0.5;
+      const dz = Math.cos(face) * Math.sin(lean) * trunkH * 0.5;
+      trunks.push({
+        x, y, z, rx: lerp(0.30, 0.42, rnd()) * k, ry: trunkH / 3.6,
+        rot: face, tilt: lean, far,
+      });
+      const crownY = y + trunkH * Math.cos(lean) * 0.97;
+      const n = 9 + Math.floor(rnd() * 4);
+      const hue = lerp(0.24, 0.30, rnd());
+      const lit = lerp(0.26, 0.38, rnd());
+      const spin = rnd() * Math.PI * 2;
+      for (let i = 0; i < n; i++) {
+        fronds.push({
+          far,
+          x: x + dx, y: crownY, z: z + dz,
+          len: lerp(5.4, 8.2, rnd()) * k,
+          yaw: spin + (i / n) * Math.PI * 2 + lerp(-0.18, 0.18, rnd()),
+          // Mostly flat, a few lifting. Fronds that all point up read as a yucca.
+          pitch: lerp(-0.06, 0.40, rnd()),
+          hsl: [hue, lerp(0.40, 0.60, rnd()), lit + lerp(-0.05, 0.05, rnd())],
+        });
+      }
+      // A few coconuts, tucked under the crown.
+      if (rnd() < 0.55) {
+        blobs.push({
+          far, x: x + dx, y: crownY - 0.35, z: z + dz,
+          s: 0.42 * k, squash: 0.9, rot: 0, tilt: 0,
+          hsl: [0.09, 0.34, 0.22],
+        });
+      }
       return;
     }
 
@@ -362,6 +463,27 @@ export function createTrees(toonRamp) {
     }
   }
 
+  // Pass E — shells, on the sand. Sampled by rejection against the bunker
+  // field rather than scattered near it: the beaches on this course are
+  // enormous and irregular, and anything cheaper put shells on grass.
+  if (COURSE.shells) {
+    for (let i = 0; i < 4200 && shells.length < 900; i++) {
+      const z = lerp(zNear - 40, zFar, rnd());
+      const sx = centreXAt(z) + lerp(-140, 140, rnd());
+      if (bunkerField(sx, z) > 0.92) continue;      // not on sand
+      if (pondField(sx, z) < 1.02) continue;        // not in the water
+      shells.push({
+        x: sx, y: heightAt(sx, z) + 0.02, z,
+        s: lerp(0.20, 0.44, rnd()),
+        rot: rnd() * Math.PI * 2,
+        tilt: lerp(-0.5, 0.5, rnd()),
+        hsl: rnd() < 0.28
+          ? [lerp(0.02, 0.07, rnd()), lerp(0.30, 0.55, rnd()), lerp(0.72, 0.84, rnd())]
+          : [lerp(0.07, 0.11, rnd()), lerp(0.10, 0.30, rnd()), lerp(0.80, 0.93, rnd())],
+      });
+    }
+  }
+
   // ------------------------------------------------------------ build meshes
   // Where the trees actually ended up, at about three yards a texel.
   //
@@ -402,14 +524,22 @@ export function createTrees(toonRamp) {
     const mine = (arr) => arr.filter((o) => !!o.far === far);
 
     const T = mine(trunks), B = mine(blobs), P = mine(pines), S = mine(shrubs);
+    const F = mine(fronds);
     const trunkMesh = new THREE.InstancedMesh(trunkGeo,
       new THREE.MeshToonMaterial({ color: 0x8d6547, gradientMap: toonRamp }), Math.max(1, T.length));
     const blobMesh = new THREE.InstancedMesh(canopyGeo, leaf(), Math.max(1, B.length));
     const pineMesh = new THREE.InstancedMesh(makePineGeo(far), leaf(), Math.max(1, P.length));
     const shrubMesh = new THREE.InstancedMesh(canopyGeo, leaf(), Math.max(1, S.length));
+    // Double-sided: half the fronds on any palm are seen from underneath.
+    const frondMesh = new THREE.InstancedMesh(
+      makeFrondGeo(far),
+      new THREE.MeshToonMaterial({ color: 0xffffff, gradientMap: toonRamp, side: THREE.DoubleSide }),
+      Math.max(1, F.length)
+    );
 
     T.forEach((t, i) => {
-      e.set(0, t.rot, 0);
+      // A palm carries a tilt; everything else is upright and passes zero.
+      e.set(t.tilt ?? 0, t.rot, 0);
       m.compose(pos.set(t.x, t.y, t.z), q.setFromEuler(e), scl.set(t.rx, t.ry, t.rx));
       trunkMesh.setMatrixAt(i, m);
     });
@@ -427,6 +557,16 @@ export function createTrees(toonRamp) {
       col.setHSL(p.hsl[0], p.hsl[1], p.hsl[2]);
       pineMesh.setColorAt(i, col);
     });
+    F.forEach((fr, i) => {
+      // Euler XYZ composes as Rx·Ry·Rz, so the pitch in Z applies first — the
+      // blade tilts up in its own frame — and the yaw then swings it round the
+      // crown. The other order fans the fronds into a cone lying on its side.
+      e.set(0, fr.yaw, fr.pitch);
+      m.compose(pos.set(fr.x, fr.y, fr.z), q.setFromEuler(e), scl.set(fr.len, fr.len, fr.len));
+      frondMesh.setMatrixAt(i, m);
+      col.setHSL(fr.hsl[0], fr.hsl[1], fr.hsl[2]);
+      frondMesh.setColorAt(i, col);
+    });
     S.forEach((sh, i) => {
       e.set(0, sh.rot, 0);
       m.compose(pos.set(sh.x, sh.y, sh.z), q.setFromEuler(e), scl.set(sh.sx, sh.sy, sh.sx));
@@ -436,7 +576,8 @@ export function createTrees(toonRamp) {
     });
 
     for (const [mesh, n] of [[trunkMesh, T.length], [blobMesh, B.length],
-                             [pineMesh, P.length], [shrubMesh, S.length]]) {
+                             [pineMesh, P.length], [shrubMesh, S.length],
+                             [frondMesh, F.length]]) {
       mesh.count = n;
       mesh.visible = n > 0;
       mesh.instanceMatrix.needsUpdate = true;
@@ -449,6 +590,28 @@ export function createTrees(toonRamp) {
 
   build(false);
   build(true);
+
+  if (shells.length) {
+    const shellMesh = new THREE.InstancedMesh(
+      makeShellGeo(),
+      new THREE.MeshToonMaterial({ color: 0xffffff, gradientMap: toonRamp, side: THREE.DoubleSide }),
+      shells.length
+    );
+    shells.forEach((sh, i) => {
+      e.set(sh.tilt, sh.rot, 0);
+      m.compose(pos.set(sh.x, sh.y, sh.z), q.setFromEuler(e), scl.set(sh.s, sh.s, sh.s));
+      shellMesh.setMatrixAt(i, m);
+      col.setHSL(sh.hsl[0], sh.hsl[1], sh.hsl[2]);
+      shellMesh.setColorAt(i, col);
+    });
+    shellMesh.instanceMatrix.needsUpdate = true;
+    if (shellMesh.instanceColor) shellMesh.instanceColor.needsUpdate = true;
+    // No shadows: a shell is two inches across, and its shadow would be one
+    // shadow-map texel of noise scattered nine hundred times.
+    shellMesh.castShadow = false;
+    shellMesh.frustumCulled = false;
+    group.add(shellMesh);
+  }
 
   return group;
 }

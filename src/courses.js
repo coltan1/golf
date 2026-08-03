@@ -8,142 +8,195 @@
  * and the reason these are not `const`.
  *
  * A course is a routing plus a character. The routing is the holes; the
- * character is how densely it is wooded and how the turf is tinted, which is
- * most of the difference between a course cut through pines and one lying open
- * on the coast.
+ * character is a handful of flags the prop and ambience builders read — what
+ * grows here, what is scattered on the sand, what flies overhead. That is most
+ * of the difference between a course cut through pines and one lying along a
+ * shoreline.
  */
 
 import { HOLES as PARKLAND } from './holes.js';
 
 const W_OPEN = [30, 28, 26, 25];
 const W_WIDE = [26, 25, 23, 22];
-const W_NORMAL = [24, 22, 20, 19];
 
 /**
- * The Dunes — nine holes of links.
+ * A beach along the near edge of a hole's water.
  *
- * Deliberately not a second parkland course. Wider corridors, far more sand,
- * humps and hollows instead of a steady climb, and greens you can run a ball
- * onto. Playing it should feel like a different sport to the tree-lined one,
- * which is the only reason to have a second course at all.
+ * The terrain only knows two kinds of ground that are not grass: sand and
+ * water, and sand is a list of ellipses. So rather than teach it about a
+ * shoreline, the shoreline *is* a row of overlapping bunkers laid along the
+ * water's inland edge — which means the surface lookup, the lie, the colour,
+ * the ball physics and the shell scatter all work on it already, with nothing
+ * new to keep in step.
+ *
+ * They are dug like bunkers too, two yards below the turf, which is what a
+ * beach should do anyway: the ground has to fall to meet the sea.
  */
-const DUNES = [
+function shoreline(water, n = 11) {
+  const side = Math.sign(water.off) || 1;
+  // Centred on the water's edge, not inland of it. The pond outline wanders by
+  // a fifth of its radius — that is what stops it looking like a drawn oval —
+  // so sand placed to stop neatly at the average edge leaves grass showing
+  // wherever the water pulls back. These straddle it and are wide enough that
+  // the wander stays inside them.
+  const off = water.off - side * water.rx * 0.94;
+  const out = [];
+  for (let i = 0; i < n; i++) {
+    const t = n === 1 ? 0.5 : i / (n - 1);
+    out.push({
+      at: water.at + (t - 0.5) * water.rz * 1.9,
+      off: off + Math.sin(t * 5.1) * 6,
+      rx: 40, rz: water.rz * (1.9 / n) * 1.05,
+      rot: 0,
+    });
+  }
+  return out;
+}
+
+/**
+ * Palm Cay — nine holes along the water.
+ *
+ * Every hole has the sea on one side, and it alternates, so the trouble is
+ * never in the same place two holes running. Corridors are wide and the ground
+ * barely moves: the difficulty is the water and the sand, not the contours.
+ *
+ * The sea is a pond. There is one water body per hole in the terrain, and
+ * rather than add a second concept for an ocean, this makes the pond enormous
+ * and pushes it far enough off the centreline that its near edge is a beach
+ * running the length of the hole. Everything downstream — the splash, the
+ * penalty, the waterline, the reflection — already works on a pond.
+ */
+const BEACH = [
   {
-    n: 1, name: 'Sandpiper', par: 4, yards: 402,
-    path: [[0, 6], [-4, -120], [-10, -250], [-24, -360], [-32, -412]],
+    n: 1, name: 'Shell Beach', par: 4, yards: 388,
+    path: [[0, 6], [-3, -110], [-8, -240], [-16, -350], [-20, -398]],
     width: W_OPEN,
-    elev: [0, -2, 1, 3],
-    green: { at: 398, off: -3, r: 16, squash: 1.2 },
+    elev: [0, 1, 2, 2],
+    green: { at: 384, off: -4, r: 16, squash: 1.15 },
+    water: { at: 230, off: 96, rx: 78, rz: 150 },
     bunkers: [
-      { at: 240, off: -26, rx: 13, rz: 9, rot: 0.2 },
-      { at: 262, off: 24, rx: 11, rz: 7, rot: -0.3 },
-      { at: 386, off: -22, rx: 10, rz: 7, rot: 0.5 },
+      ...shoreline({ at: 230, off: 96, rx: 78, rz: 150 }),
+      { at: 250, off: 34, rx: 20, rz: 12, rot: 0.1 },
+      { at: 366, off: -20, rx: 11, rz: 8, rot: 0.4 },
     ],
-    mounds: [{ at: 300, off: 34, r: 26, h: 4.2 }, { at: 200, off: -38, r: 22, h: 3.6 }],
+    mounds: [{ at: 300, off: -34, r: 24, h: 3.0 }],
   },
   {
-    n: 2, name: 'Marram', par: 3, yards: 168,
-    path: [[0, 6], [2, -80], [4, -166]],
+    n: 2, name: 'The Reef', par: 3, yards: 162,
+    path: [[0, 6], [4, -78], [8, -160]],
     width: W_WIDE,
-    elev: [0, 4, 6],
-    green: { at: 165, off: 3, r: 15 },
+    elev: [0, 2, 3],
+    green: { at: 159, off: 6, r: 15 },
+    // Straight over the corner of the bay. Short, and entirely about nerve.
+    water: { at: 96, off: -74, rx: 66, rz: 96 },
     bunkers: [
-      { at: 150, off: -17, rx: 11, rz: 8, rot: 0.3 },
-      { at: 156, off: 18, rx: 10, rz: 7, rot: -0.2 },
-      { at: 176, off: 4, rx: 12, rz: 6, rot: 0 },
+      ...shoreline({ at: 96, off: -74, rx: 66, rz: 96 }),
+      { at: 146, off: 17, rx: 11, rz: 8, rot: -0.3 },
+      { at: 172, off: 5, rx: 12, rz: 7, rot: 0 },
     ],
-    mounds: [{ at: 120, off: 28, r: 20, h: 3.0 }],
+    mounds: [{ at: 120, off: 30, r: 18, h: 2.4 }],
   },
   {
-    n: 3, name: 'The Cape', par: 5, yards: 528,
-    path: [[0, 6], [8, -130], [26, -260], [70, -370], [104, -470], [116, -520]],
+    n: 3, name: 'Palm Row', par: 5, yards: 534,
+    path: [[0, 6], [6, -130], [20, -262], [58, -372], [92, -472], [104, -528]],
     width: W_WIDE,
-    elev: [0, -3, -1, 2],
-    green: { at: 524, off: 6, r: 16 },
-    water: { at: 300, off: 52, rx: 34, rz: 26 },
+    elev: [0, -1, 0, 1],
+    green: { at: 530, off: 6, r: 16 },
+    water: { at: 330, off: -92, rx: 70, rz: 130 },
     bunkers: [
-      { at: 270, off: -25, rx: 14, rz: 9, rot: 0.1 },
-      { at: 505, off: -21, rx: 11, rz: 7, rot: 0.4 },
+      ...shoreline({ at: 330, off: -92, rx: 70, rz: 130 }),
+      { at: 268, off: 26, rx: 14, rz: 9, rot: 0.1 },
+      { at: 508, off: -20, rx: 11, rz: 7, rot: 0.4 },
+      { at: 512, off: 21, rx: 10, rz: 7, rot: -0.4 },
     ],
-    mounds: [{ at: 420, off: -36, r: 26, h: 4.0 }],
+    mounds: [{ at: 420, off: 34, r: 26, h: 3.4 }],
   },
   {
-    n: 4, name: 'Bunker Hill', par: 4, yards: 372,
-    path: [[0, 6], [-6, -110], [-18, -230], [-30, -330], [-36, -378]],
-    width: W_NORMAL,
-    elev: [0, 5, 9, 12],
-    green: { at: 368, off: -4, r: 15 },
+    n: 4, name: 'Driftwood', par: 4, yards: 356,
+    path: [[0, 6], [-7, -108], [-20, -226], [-32, -322], [-38, -366]],
+    width: W_WIDE,
+    elev: [0, 3, 5, 6],
+    green: { at: 352, off: -6, r: 15 },
+    water: { at: 210, off: 88, rx: 66, rz: 120 },
     bunkers: [
-      { at: 205, off: -22, rx: 12, rz: 8, rot: 0.2 },
-      { at: 225, off: 21, rx: 12, rz: 8, rot: -0.2 },
-      { at: 350, off: -20, rx: 10, rz: 7, rot: 0.6 },
-      { at: 356, off: 19, rx: 9, rz: 6, rot: -0.5 },
+      ...shoreline({ at: 210, off: 88, rx: 66, rz: 120 }),
+      { at: 198, off: -22, rx: 12, rz: 8, rot: 0.2 },
+      { at: 334, off: -19, rx: 10, rz: 7, rot: 0.5 },
+      { at: 340, off: 18, rx: 9, rz: 6, rot: -0.4 },
     ],
-    mounds: [{ at: 290, off: 30, r: 24, h: 5.0 }],
+    mounds: [{ at: 280, off: -32, r: 22, h: 3.8 }],
   },
   {
-    n: 5, name: 'Long Strand', par: 5, yards: 561,
-    path: [[0, 6], [-2, -140], [-4, -280], [-8, -410], [-12, -520], [-14, -556]],
+    n: 5, name: 'Long Tide', par: 5, yards: 549,
+    path: [[0, 6], [-2, -140], [-5, -278], [-9, -404], [-13, -512], [-15, -544]],
     width: W_OPEN,
-    elev: [0, -4, -6, -3],
-    green: { at: 557, off: -2, r: 17, squash: 1.15 },
+    elev: [0, -2, -3, -1],
+    green: { at: 545, off: -2, r: 17, squash: 1.15 },
+    water: { at: 340, off: -100, rx: 76, rz: 170 },
     bunkers: [
-      { at: 250, off: 27, rx: 15, rz: 9, rot: 0 },
-      { at: 400, off: -26, rx: 13, rz: 8, rot: 0.3 },
-      { at: 540, off: 20, rx: 10, rz: 7, rot: -0.4 },
+      ...shoreline({ at: 340, off: -100, rx: 76, rz: 170 }),
+      { at: 262, off: 28, rx: 16, rz: 10, rot: 0 },
+      { at: 418, off: 25, rx: 13, rz: 8, rot: 0.3 },
+      { at: 528, off: 20, rx: 10, rz: 7, rot: -0.4 },
     ],
-    mounds: [{ at: 330, off: -34, r: 28, h: 4.4 }, { at: 470, off: 32, r: 24, h: 3.8 }],
+    mounds: [{ at: 340, off: 36, r: 28, h: 3.6 }],
   },
   {
-    n: 6, name: 'Gullys', par: 3, yards: 142,
-    path: [[0, 6], [-2, -70], [-3, -140]],
+    n: 6, name: 'Gull Point', par: 3, yards: 148,
+    path: [[0, 6], [-3, -72], [-5, -146]],
     width: W_WIDE,
-    elev: [0, -3, -5],
-    green: { at: 139, off: -2, r: 14 },
+    elev: [0, 2, 4],
+    green: { at: 145, off: -4, r: 14 },
+    water: { at: 92, off: 70, rx: 60, rz: 92 },
     bunkers: [
-      { at: 126, off: -15, rx: 10, rz: 7, rot: 0.4 },
-      { at: 130, off: 16, rx: 9, rz: 6, rot: -0.3 },
+      ...shoreline({ at: 92, off: 70, rx: 60, rz: 92 }),
+      { at: 132, off: -16, rx: 10, rz: 7, rot: 0.4 },
+      { at: 158, off: -3, rx: 11, rz: 6, rot: 0 },
     ],
-    mounds: [{ at: 95, off: 24, r: 18, h: 3.2 }],
+    mounds: [{ at: 100, off: -26, r: 18, h: 2.6 }],
   },
   {
-    n: 7, name: 'The Elbow', par: 4, yards: 431,
-    path: [[0, 6], [4, -120], [12, -240], [56, -340], [88, -420], [98, -448]],
-    width: W_NORMAL,
-    elev: [0, 2, 5, 4],
-    green: { at: 427, off: 5, r: 15 },
-    bunkers: [
-      { at: 268, off: 28, rx: 14, rz: 9, rot: 0.2 },
-      { at: 410, off: -20, rx: 11, rz: 7, rot: 0.5 },
-    ],
-    mounds: [{ at: 340, off: -34, r: 26, h: 4.6 }],
-  },
-  {
-    n: 8, name: 'Saltmarsh', par: 4, yards: 388,
-    path: [[0, 6], [-8, -120], [-22, -245], [-40, -350], [-48, -395]],
-    width: W_NORMAL,
-    elev: [0, -2, -4, -2],
-    green: { at: 384, off: -6, r: 15 },
-    water: { at: 330, off: -44, rx: 28, rz: 20 },
-    bunkers: [
-      { at: 232, off: 24, rx: 12, rz: 8, rot: -0.2 },
-      { at: 366, off: 19, rx: 10, rz: 7, rot: 0.3 },
-    ],
-    mounds: [{ at: 280, off: 30, r: 22, h: 3.4 }],
-  },
-  {
-    n: 9, name: 'Homeward', par: 4, yards: 455,
-    path: [[0, 6], [6, -130], [16, -260], [34, -370], [44, -448], [48, -474]],
+    n: 7, name: 'The Sandbar', par: 4, yards: 418,
+    path: [[0, 6], [5, -118], [14, -238], [54, -336], [84, -414], [92, -436]],
     width: W_WIDE,
-    elev: [0, 3, 7, 10],
-    green: { at: 451, off: 4, r: 16 },
+    elev: [0, 1, 2, 2],
+    green: { at: 414, off: 5, r: 15 },
+    water: { at: 270, off: -88, rx: 64, rz: 118 },
     bunkers: [
-      { at: 262, off: -26, rx: 13, rz: 9, rot: 0.1 },
-      { at: 284, off: 25, rx: 12, rz: 8, rot: -0.3 },
-      { at: 432, off: -21, rx: 11, rz: 7, rot: 0.4 },
-      { at: 440, off: 20, rx: 10, rz: 7, rot: -0.4 },
+      ...shoreline({ at: 270, off: -88, rx: 64, rz: 118 }),
+      { at: 258, off: 30, rx: 18, rz: 11, rot: 0.2 },
+      { at: 396, off: -20, rx: 11, rz: 7, rot: 0.5 },
     ],
-    mounds: [{ at: 360, off: 36, r: 28, h: 5.2 }],
+    mounds: [{ at: 330, off: 34, r: 24, h: 3.2 }],
+  },
+  {
+    n: 8, name: 'Coral', par: 4, yards: 375,
+    path: [[0, 6], [-9, -116], [-24, -238], [-42, -340], [-50, -384]],
+    width: W_WIDE,
+    elev: [0, -1, -2, -1],
+    green: { at: 371, off: -8, r: 15 },
+    water: { at: 300, off: 86, rx: 62, rz: 124 },
+    bunkers: [
+      ...shoreline({ at: 300, off: 86, rx: 62, rz: 124 }),
+      { at: 226, off: -24, rx: 12, rz: 8, rot: -0.2 },
+      { at: 354, off: 19, rx: 10, rz: 7, rot: 0.3 },
+    ],
+    mounds: [{ at: 270, off: -30, r: 22, h: 2.8 }],
+  },
+  {
+    n: 9, name: 'Homeward Bay', par: 4, yards: 442,
+    path: [[0, 6], [7, -128], [18, -256], [38, -364], [48, -436], [52, -462]],
+    width: W_OPEN,
+    elev: [0, 2, 4, 6],
+    green: { at: 438, off: 5, r: 16 },
+    water: { at: 300, off: -94, rx: 72, rz: 140 },
+    bunkers: [
+      ...shoreline({ at: 300, off: -94, rx: 72, rz: 140 }),
+      { at: 268, off: 27, rx: 15, rz: 10, rot: 0.1 },
+      { at: 418, off: -20, rx: 11, rz: 7, rot: 0.4 },
+      { at: 424, off: 20, rx: 10, rz: 7, rot: -0.4 },
+    ],
+    mounds: [{ at: 350, off: 34, r: 26, h: 3.8 }],
   },
 ];
 
@@ -157,13 +210,17 @@ export const COURSES = [
     trees: 1,
   },
   {
-    id: 'dunes',
-    name: 'The Dunes',
-    blurb: 'Nine holes of open links. Wide off the tee, and sand everywhere.',
-    holes: DUNES,
-    // Barely wooded. A links course with a forest around it is a parkland
-    // course with different hole names.
-    trees: 0.18,
+    id: 'beach',
+    name: 'Palm Cay',
+    blurb: 'Nine holes on the shoreline. Palms, sand, and the sea always on one side.',
+    holes: BEACH,
+    // Palms are thinner than pines and read as clutter in a crowd, so there are
+    // fewer of them — but they are what grows here, so the treeline is entirely
+    // palm rather than palms mixed into a forest.
+    trees: 0.34,
+    palms: true,
+    shells: true,
+    gulls: true,
   },
 ];
 

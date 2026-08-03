@@ -1,12 +1,17 @@
 /**
  * match.js — online 1v1.
  *
- * Simultaneous stroke play, not alternating shots. Both players play the same
- * hole at their own pace, each sees the other's ball, and neither moves on
- * until both have holed out. Alternating would be more literally "turn based",
- * but it means one player sits watching a progress bar for half of every hole;
- * simultaneous keeps both people swinging and removes turn arbitration — which
- * is the part of a networked game most likely to be subtly wrong — entirely.
+ * Alternating stroke play. You hit, then they hit, and while it is their turn
+ * you watch them do it — the camera goes to their ball and your swing is locked
+ * out until their shot comes to rest.
+ *
+ * Turn arbitration is the part of a networked game most likely to be subtly
+ * wrong, so there is no turn message and no negotiation. The turn simply
+ * follows the last shot that finished: when my ball comes to rest I hand over,
+ * and when their `ball` arrives I take it back. Every transition is driven by
+ * an event both sides already had to send, so a turn cannot be invented, lost
+ * in transit, or held by both players at once. If one of them holes out first,
+ * the other keeps the turn until they are in too.
  *
  * The holes are already deterministic from their definitions, so there is no
  * course to synchronise: both clients build hole 1 identically. The only shared
@@ -42,10 +47,14 @@ export class Match {
     this.oppTotal = 0;
     this.myDone = false;
     this.oppDone = false;
+    // 0 or 1 — the side whose shot the world is waiting on. Compared against
+    // net.side, which the pairing already settled.
+    this.turn = 0;
 
     this.onStatus = null;    // (text, kind)
     this.onAdvance = null;   // both players finished the hole
     this.onMatched = null;   // (meta) paired — build the host's course
+    this.onTurn = null;      // (mine) the turn changed hands
 
     this._ghost = null;
     this._ghostTo = new THREE.Vector3();
@@ -122,7 +131,31 @@ export class Match {
     this.myDone = this.oppDone = false;
     this._ghostHas = false;
     this._hideGhost();
+    // Honour alternates by hole, so neither player tees off first all round.
+    this._setTurn(this.hole % 2);
   }
+
+  _setTurn(side) {
+    const was = this.turn;
+    this.turn = side;
+    if (was !== side) this.onTurn?.(this.myTurn);
+  }
+
+  /** True when the game should let us swing. */
+  get myTurn() {
+    if (!this.active) return true;
+    if (this.oppDone) return true;        // they are in; play it out alone
+    if (this.myDone) return false;        // we are in; watch them finish
+    return this.turn === this.net.side;
+  }
+
+  /** True while we should be watching them instead of playing. */
+  get spectating() {
+    return this.active && !this.myTurn && !!this._opp;
+  }
+
+  /** Where the camera should be looking while spectating. */
+  get watchPos() { return this._ghostTo; }
 
   // ------------------------------------------------------------ from the game
   /**
@@ -136,6 +169,9 @@ export class Match {
     if (!this.active) return;
     this.net.send({ t: 'ball', h: hole, x: +pos.x.toFixed(2), y: +pos.y.toFixed(2),
       z: +pos.z.toFixed(2), s: strokes });
+    // Our shot is over, so it is theirs — unless they are already in the hole,
+    // in which case the turn never leaves us again.
+    if (!this.oppDone) this._setTurn(1 - this.net.side);
   }
 
   /** We have struck the ball — let them watch us do it. */
@@ -150,6 +186,7 @@ export class Match {
     this.myDone = true;
     this.myTotal += strokes;
     this.net.send({ t: 'hole', h: hole, s: strokes });
+    if (!this.oppDone) this._setTurn(1 - this.net.side);
     this._checkHole();
   }
 
@@ -164,6 +201,24 @@ export class Match {
     return this.active && this.myDone && !this.oppDone;
   }
 
+  /**
+   * Put both of them on the tee at the start of a hole.
+   *
+   * Without this the opponent has no known position until their first shot
+   * lands, so the first turn of every hole would be spent watching an empty
+   * fairway. main.js calls it once the new hole is built and the tee is known.
+   */
+  placeAtTee(x, z) {
+    if (!this.active) return;
+    this._ghostTo.set(x, heightAt(x, z) + 0.15, z);
+    const g = this._ensureGhost();
+    g.position.copy(this._ghostTo);
+    g.visible = true;
+    this._ghostHas = true;
+    this._placeOpponent(x, z);
+    this.onTurn?.(this.myTurn);
+  }
+
   // ------------------------------------------------------------ from the wire
   _message(m) {
     if (!this.active || !m) return;
@@ -176,12 +231,14 @@ export class Match {
     if (m.t === 'ball') {
       this.oppStrokes = m.s ?? this.oppStrokes;
       this._moveGhost(m.x, m.y, m.z);
+      if (!this.myDone) this._setTurn(this.net.side);
     } else if (m.t === 'hole') {
       if (this.oppDone) return;         // duplicate; scores must not double
       this.oppDone = true;
       this.oppStrokes = m.s ?? 0;
       this.oppTotal += this.oppStrokes;
       this._hideGhost();
+      if (!this.myDone) this._setTurn(this.net.side);
       this._checkHole();
     }
   }

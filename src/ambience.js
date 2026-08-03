@@ -13,7 +13,7 @@ import * as THREE from 'three';
 import { mulberry32, lerp } from './util.js';
 import { timeOfDay } from './scenery.js';
 import {
-  heightAt, centreXAt, fairwayHalfWidth, nearest, TEE, WORLD_CZ, WORLD_SIZE,
+  heightAt, centreXAt, fairwayHalfWidth, nearest, TEE, WORLD_CZ, WORLD_SIZE, POND,
 } from './course.js';
 
 // Light travels the opposite way to the sun's offset. Derived rather than
@@ -282,6 +282,138 @@ export function createButterflies() {
         // Mirroring by a negative scale is what makes the second wing; the
         // material is DoubleSide, so the flipped winding does not matter.
         mS.makeScale(f.size * sgn, f.size, f.size);
+        m.multiplyMatrices(mT, mY).multiply(mZ).multiply(mS);
+        mesh.setMatrixAt(i * 2 + w, m);
+      }
+    });
+    mesh.instanceMatrix.needsUpdate = true;
+  };
+
+  return group;
+}
+
+// ---------------------------------------------------------------- seagulls
+/**
+ * One gull wing: a swept, tapering blade.
+ *
+ * Built as geometry rather than an alpha-tested texture like the butterfly's,
+ * because a gull is seen against bright sky far more often than a butterfly is
+ * — and an alpha test against a hazy sky shows its cutout edge. Eight triangles
+ * a wing, and there are only a couple of dozen birds.
+ */
+function makeGullWingGeo() {
+  const seg = 4;
+  const pos = [];
+  const idx = [];
+  for (let i = 0; i <= seg; i++) {
+    const t = i / seg;
+    const chord = 0.34 * (1 - t * 0.74);   // narrows to a point at the tip
+    const sweep = -0.20 * t * t;           // and rakes back
+    pos.push(t, 0, sweep - chord * 0.34, t, 0, sweep + chord * 0.66);
+  }
+  for (let i = 0; i < seg; i++) {
+    const a = i * 2;
+    idx.push(a, a + 2, a + 1, a + 1, a + 2, a + 3);
+  }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  g.setIndex(idx);
+  g.computeVertexNormals();
+  return g;
+}
+
+/**
+ * Gulls, wheeling over the water.
+ *
+ * They circle far more than they flap: a gull on a sea breeze holds its wings
+ * out and turns, and the flap is an occasional correction. Getting that ratio
+ * right is most of what makes them read as gulls rather than as pigeons.
+ *
+ * Banking and flapping share an axis, which is convenient rather than awkward.
+ * The two wings take `bank + sgn*(dihedral + flap)`: the common term rolls the
+ * whole bird into its turn, the signed term beats the wings against each other.
+ */
+export function createSeagulls() {
+  const group = new THREE.Group();
+  group.name = 'seagulls';
+  const rnd = mulberry32(90118);
+
+  const COUNT = 26;
+  const birds = [];
+  const zNear = TEE.z - 20;
+  const zFar = WORLD_CZ - WORLD_SIZE * 0.28;
+
+  for (let i = 0; i < COUNT; i++) {
+    let x, z;
+    // Over the water where there is water, which on this course is most of one
+    // side of every hole; scattered along the corridor otherwise.
+    if (POND && rnd() < 0.72) {
+      x = POND.x + lerp(-1, 1, rnd()) * POND.rx * 0.9;
+      z = POND.z + lerp(-1, 1, rnd()) * POND.rz * 0.9;
+    } else {
+      z = lerp(zNear, zFar, rnd());
+      const side = rnd() < 0.5 ? 1 : -1;
+      const n = nearest(centreXAt(z), z);
+      x = centreXAt(z) + side * (fairwayHalfWidth(n.t) + lerp(20, 120, rnd()));
+    }
+    birds.push({
+      home: new THREE.Vector3(x, Math.max(0, heightAt(x, z)), z),
+      r: lerp(18, 62, rnd()),
+      w: lerp(0.07, 0.19, rnd()) * (rnd() < 0.5 ? 1 : -1),   // both directions
+      ph: rnd() * Math.PI * 2,
+      hover: lerp(14, 42, rnd()),
+      bob: lerp(1.5, 5.0, rnd()),
+      bobW: lerp(0.15, 0.4, rnd()),
+      size: lerp(1.5, 2.5, rnd()),
+      // Long gaps between bursts of flapping, and each bird on its own clock.
+      flapW: lerp(5.5, 8.5, rnd()),
+      burstW: lerp(0.10, 0.26, rnd()),
+      burstPh: rnd() * Math.PI * 2,
+      dihedral: lerp(0.06, 0.20, rnd()),
+    });
+  }
+
+  const mesh = new THREE.InstancedMesh(
+    makeGullWingGeo(),
+    new THREE.MeshBasicMaterial({ color: 0xf7fbff, side: THREE.DoubleSide, toneMapped: false }),
+    birds.length * 2
+  );
+  mesh.frustumCulled = false;
+  mesh.castShadow = false;
+  group.add(mesh);
+
+  const pos = new THREE.Vector3();
+  const mT = new THREE.Matrix4();
+  const mY = new THREE.Matrix4();
+  const mZ = new THREE.Matrix4();
+  const mS = new THREE.Matrix4();
+  const m = new THREE.Matrix4();
+
+  let t = 0;
+  group.userData.tick = (dt) => {
+    t += dt;
+    birds.forEach((b, i) => {
+      const a = t * b.w + b.ph;
+      pos.set(
+        b.home.x + Math.cos(a) * b.r,
+        b.home.y + b.hover + Math.sin(t * b.bobW + b.ph) * b.bob,
+        b.home.z + Math.sin(a) * b.r
+      );
+      // Heading is the tangent of the circle, which is the angle plus a quarter
+      // turn — no need to sample two positions and subtract them.
+      const yaw = Math.atan2(-Math.sin(a) * b.w, Math.cos(a) * b.w) + Math.PI / 2;
+      // Into the turn, and the tighter and faster the circle the harder it leans.
+      const bank = Math.sign(b.w) * Math.min(0.55, Math.abs(b.w) * b.r * 0.09);
+      // Bursts: mostly gliding, with a flurry every few seconds.
+      const burst = Math.max(0, Math.sin(t * b.burstW + b.burstPh) - 0.55) * 2.6;
+      const flap = Math.sin(t * b.flapW + b.ph) * burst;
+
+      mT.makeTranslation(pos.x, pos.y, pos.z);
+      mY.makeRotationY(yaw);
+      for (let w = 0; w < 2; w++) {
+        const sgn = w === 0 ? 1 : -1;
+        mZ.makeRotationZ(bank + sgn * (b.dihedral + flap));
+        mS.makeScale(b.size * sgn, b.size, b.size);
         m.multiplyMatrices(mT, mY).multiply(mZ).multiply(mS);
         mesh.setMatrixAt(i * 2 + w, m);
       }

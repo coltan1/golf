@@ -24,11 +24,11 @@ import { Ball, CLUBS, pickClub } from './ball.js';
 import { SwipeSwing } from './input.js';
 import { CameraRig } from './camerarig.js';
 import { AimLine } from './aimline.js';
-import { createSunRays, createButterflies, createMotes } from './ambience.js';
+import { createSunRays, createButterflies, createSeagulls, createMotes } from './ambience.js';
 import { FreeCam } from './freecam.js';
 import { Audio } from './audio.js';
 import { Hud, scoreName } from './hud.js';
-import { createKitPanel } from './kit.js';
+import { createKitControls } from './kit.js';
 import { createMenu } from './menu.js';
 import { Match } from './match.js';
 import { COURSES, COURSE, HOLES, TOTAL_PAR, setCourse } from './courses.js';
@@ -64,7 +64,7 @@ const audio = new Audio();
 
 // ---------------------------------------------------------------- world
 let terrain, water, creek, clouds, flag, clubhouse, golfer, ball, rig, aimLine, input, lights, freeCam;
-let sunRays, butterflies, motes;
+let sunRays, fliers, motes;
 let match = null;
 
 // Everything belonging to the current hole hangs off this, so switching holes
@@ -125,7 +125,6 @@ function saveLook(look) {
 let playerLook = loadLook();
 let menu = null;
 let kitPanel = null;
-let kitOpen = false;
 
 function buildWorld() {
   const ramp = makeToonRamp();
@@ -158,7 +157,9 @@ function buildWorld() {
   add(trees);
   add(createGrass(ramp));
   sunRays = add(createSunRays());
-  butterflies = add(createButterflies());
+  // Gulls where there is a sea to wheel over, butterflies where there are
+  // azaleas. Same slot, same tick contract, different place.
+  fliers = add(COURSE.gulls ? createSeagulls() : createButterflies());
   motes = add(createMotes());
   clubhouse = add(createClubhouse(ramp));
   add(createTeeMarkers(ramp));
@@ -182,7 +183,6 @@ function initOnce() {
   input = new SwipeSwing(renderer.domElement);
   freeCam = new FreeCam(camera, renderer.domElement);
   wireInput();
-  kitPanel ??= createKitPanel(window.golfer);   // the menu may have built it already
 }
 
 // ---------------------------------------------------------------- freecam
@@ -318,6 +318,9 @@ function beginHole() {
   ball.mesh.visible = true;
   ball.placeAt(TEE.x, TEE.z);
   refreshShot();
+  // Put them on the tee too, so the first turn of the hole has someone to watch
+  // rather than an empty fairway.
+  match?.placeAtTee(TEE.x, TEE.z);
   hud.hideCard();
   hud.setHole(HOLE.n, HOLE.name, PAR, HOLE_LENGTH);
   refreshScore();
@@ -403,6 +406,9 @@ function penalty(kind) {
   hud.shot(kind === 'splash' ? 'In the water · +1 stroke' : 'Out of play · +1 stroke', 3.2);
   const from = game.shotFrom;
   ball.dropNear(lerp(from.x, ball.pos.x, 0.55), lerp(from.z, ball.pos.z, 0.55) + 6);
+  // onRest never fires after a penalty, and the turn is handed over on rest —
+  // so without this, going in the water would stall the match for both players.
+  match?.reportRest(game.holeIndex, ball.pos, game.strokes);
   game.state = 'settling';
   game.settleTimer = 0.6;
   rig.setMode('settle');
@@ -565,15 +571,26 @@ function wireHole() {
 }
 
 // ---------------------------------------------------------------- camera ctx
+/**
+ * What the camera is looking at.
+ *
+ * While it is the opponent's turn this hands the rig their ball instead of
+ * ours, and every mode the rig has then frames them rather than us. That is the
+ * whole of spectating: no second camera, no separate mode, just a different
+ * point of interest fed to the same rig.
+ */
 function camCtx() {
-  const gy = heightAt(ball.pos.x, ball.pos.z);
+  const watch = match?.spectating ? match.watchPos : null;
+  const p = watch ?? ball.pos;
+  const gy = heightAt(p.x, p.z);
   return {
-    ball: ball.pos,
-    aim: game.aim,
-    charge: golfer.charge,
-    shotDir: game.state === 'watching' ? game.shotDir : null,
-    ballHeight: Math.max(0, ball.pos.y - gy),
-    travelled: Math.hypot(ball.pos.x - game.shotFrom.x, ball.pos.z - game.shotFrom.z),
+    ball: p,
+    // Their aim is theirs; the best we can honestly say is "toward the hole".
+    aim: watch ? Math.atan2(HOLE_POS.x - p.x, -(HOLE_POS.z - p.z)) : game.aim,
+    charge: watch ? 0 : golfer.charge,
+    shotDir: !watch && game.state === 'watching' ? game.shotDir : null,
+    ballHeight: Math.max(0, p.y - gy),
+    travelled: watch ? 0 : Math.hypot(ball.pos.x - game.shotFrom.x, ball.pos.z - game.shotFrom.z),
     holePos: HOLE_POS,
   };
 }
@@ -593,6 +610,7 @@ function camCtx() {
  * it responds to the machine rather than to one bad frame, and never sits
  * oscillating between two scales.
  */
+let wasSpectating = false;
 const perf = { avg: 16.7, scale: MAX_SCALE, cooldown: 0, pinned: false };
 
 function adaptResolution(dt) {
@@ -634,7 +652,7 @@ function frame() {
   aimLine.update(dt);
   clouds.userData.tick(dt);
   sunRays.userData.tick(dt, camera);
-  butterflies.userData.tick(dt);
+  fliers.userData.tick(dt);
   motes.userData.tick(dt);
   match?.update(dt);
   if (water) water.userData.tick(time);
@@ -643,9 +661,16 @@ function frame() {
   clubhouse.userData.tick(dt);
 
   // --- state transitions -------------------------------------------------
-  if (game.state === 'intro' && rig.introDone) {
+  const spectating = !!match?.spectating;
+
+  // The opening fly-in ends early if it is not our shot: the rig is about to be
+  // pointed at the opponent instead, so the intro can never finish on its own,
+  // and waiting for it would leave the hole stuck in 'intro' for ever.
+  if (game.state === 'intro' && (rig.introDone || spectating)) {
     game.state = 'ready';
-    hud.hint('Swipe down to load — then swing back up through the ball');
+    hud.hint(spectating
+      ? `Watching ${match.net.opponent ?? 'your opponent'}…`
+      : 'Swipe down to load — then swing back up through the ball');
     rig.setMode('address');
   }
 
@@ -664,14 +689,28 @@ function frame() {
     }
   }
 
-  // Freecam owns the pointer while it's flying, so the swing must stand down.
-  input.enabled = !freeCam.active && (game.state === 'ready' || game.state === 'charging');
+  // Freecam owns the pointer while it's flying, so the swing must stand down —
+  // and so does it on the opponent's turn, which is the whole point of taking
+  // turns. Aiming is blocked with it: lining up a shot you cannot take yet,
+  // while the camera is somewhere else entirely, is worse than nothing.
+  input.enabled = !freeCam.active && !spectating
+    && (game.state === 'ready' || game.state === 'charging');
+  if (spectating !== wasSpectating) {
+    wasSpectating = spectating;
+    aimLine.setVisible(!spectating && game.state === 'ready');
+    // Frame their ball from behind, the way a hole starts, rather than leaving
+    // the rig in whatever mode our own last shot finished in.
+    if (spectating) rig.setMode('address');
+    else if (game.state === 'ready') { rig.setMode('address'); refreshShot({ keepAim: true }); }
+  }
 
   // Keep the (deliberately tight) shadow camera centred on the action — or on
   // the freecam, so wherever you fly still has shadows.
   let focusX, focusZ;
   if (freeCam.active) {
     focusX = freeCam.pos.x; focusZ = freeCam.pos.z;
+  } else if (match?.spectating) {
+    focusX = match.watchPos.x; focusZ = match.watchPos.z;
   } else if (game.state === 'watching') {
     focusX = ball.pos.x; focusZ = ball.pos.z;
   } else {
@@ -721,29 +760,73 @@ function setupMatch() {
 
   const style = document.createElement('style');
   style.textContent = `
-    #btnMp{pointer-events:auto;cursor:pointer;user-select:none;width:38px;height:38px;
-      padding:0;display:grid;place-items:center;font-size:15px}
-    #btnMp:active{transform:scale(.92)}
+    #btnOpts{pointer-events:auto;cursor:pointer;user-select:none;width:38px;height:38px;
+      padding:0;display:grid;place-items:center;font-size:16px}
+    #btnOpts:active{transform:scale(.92)}
     #mpStatus{position:absolute;top:max(62px,calc(env(safe-area-inset-top,0px) + 62px));
       right:16px;max-width:min(280px,60vw);text-align:right;font-size:12.5px;font-weight:700;
       opacity:0;transition:opacity .3s ease;pointer-events:none}
     #mpStatus.on{opacity:1}
     #mpStatus.good{color:#1f7a4d}#mpStatus.bad{color:#c0392b}#mpStatus.error{color:#c0392b}
     #mpStatus.busy{opacity:.7}
+    /* Under the menu (60) and under the loader (50): this is a pause screen,
+       and both of those replace the game outright. */
+    #opts{position:fixed;inset:0;z-index:45;display:none;place-items:center;
+      background:rgba(20,45,60,.34);backdrop-filter:blur(6px);
+      -webkit-backdrop-filter:blur(6px)}
+    #opts.open{display:grid}
+    #optsCard{width:min(320px,calc(100vw - 40px));padding:20px;border-radius:22px;
+      background:rgba(255,255,255,.86);border:1px solid rgba(255,255,255,.9);
+      box-shadow:0 20px 50px rgba(20,60,80,.28);text-align:center}
+    #optsCard h3{margin:0 0 4px;font-size:20px;font-weight:800;letter-spacing:-.3px}
+    #optsCard p{margin:0 0 16px;font-size:12.5px;font-weight:700;opacity:.5}
+    #optsCard button{width:100%;margin-top:9px;border:none;font:inherit;font-weight:800;
+      font-size:14.5px;padding:13px 18px;border-radius:14px;cursor:pointer;
+      color:#fff;background:linear-gradient(180deg,#63c46f,#48ab5b)}
+    #optsCard button.ghost{background:rgba(255,255,255,.9);color:#26424f;
+      border:1px solid rgba(40,70,90,.16)}
+    #optsCard button:active{transform:scale(.98)}
   `;
   document.head.appendChild(style);
 
   const btn = document.createElement('div');
   btn.className = 'pill';
-  btn.id = 'btnMp';
-  btn.title = 'Play 1v1 online';
-  btn.textContent = '⚔';
+  btn.id = 'btnOpts';
+  btn.title = 'Options';
+  btn.textContent = '⚙';
   document.getElementById('topRight')?.appendChild(btn);
 
   const status = document.createElement('div');
   status.id = 'mpStatus';
   status.className = 'pill';
   document.getElementById('hud')?.appendChild(status);
+
+  // The pause screen. Small on purpose: the only two things anyone wants from
+  // it mid-round are "carry on" and "get me out".
+  const opts = document.createElement('div');
+  opts.id = 'opts';
+  opts.innerHTML = `<div id="optsCard">
+      <h3>Paused</h3><p id="optsSub"></p>
+      <button id="optsResume">Resume</button>
+      <button class="ghost" id="optsLeave">Back to lobby</button>
+    </div>`;
+  document.body.appendChild(opts);
+
+  const setOpts = (open) => {
+    opts.classList.toggle('open', open);
+    if (open) {
+      opts.querySelector('#optsSub').textContent = match.active
+        ? `Leaving forfeits the match against ${match.net.opponent ?? 'your opponent'}.`
+        : `${HOLES[game.holeIndex].name} · hole ${game.holeIndex + 1} of ${HOLES.length}`;
+    }
+  };
+  btn.onclick = () => setOpts(!opts.classList.contains('open'));
+  opts.querySelector('#optsResume').onclick = () => setOpts(false);
+  opts.querySelector('#optsLeave').onclick = () => { setOpts(false); showMenu('home'); };
+  opts.onclick = (e) => { if (e.target === opts) setOpts(false); };
+  window.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && started && !menu?.visible) setOpts(!opts.classList.contains('open'));
+  });
 
   match.onStatus = (text, kind) => {
     status.textContent = text ?? '';
@@ -755,13 +838,12 @@ function setupMatch() {
   };
   // Both players are in: move on together, from wherever either of them was.
   match.onAdvance = () => goToHole(match.hole % HOLES.length, match.hole === 0);
-
-  // Once you are in a round, this button is only ever a way out. Getting in
-  // happens on the menu, where you can also say what you want to play.
-  btn.onclick = () => {
-    if (match.active || match.net.state === 'waiting') match.leave();
-    else showMenu('mp');
+  // Whose shot it is now. The camera and the swing both follow this.
+  match.onTurn = (mine) => {
+    if (!started) return;
+    hud.hint(mine ? 'Your shot' : `Watching ${match.net.opponent ?? 'your opponent'}…`, mine ? 2 : 0);
   };
+
   window.addEventListener('beforeunload', () => match.leave());
 }
 
@@ -799,6 +881,7 @@ window.golfer = {
     playerLook = { ...playerLook, ...partial };
     if (golfer) golfer.setLook(playerLook);
     menu?.refreshLook();
+    kitPanel?.refresh();
     match?.sendLook(playerLook);
     saveLook(playerLook);
     return { ...playerLook };
@@ -808,6 +891,8 @@ window.golfer = {
     playerLook = { ...DEFAULT_LOOK, ...LOOK_PRESETS[name] };
     if (golfer) golfer.setLook(playerLook);
     menu?.refreshLook();
+    kitPanel?.refresh();
+    kitPanel?.refresh();
     match?.sendLook(playerLook);
     saveLook(playerLook);
     return { ...playerLook };
@@ -924,14 +1009,8 @@ function boot() {
   menu = createMenu({
     getLook: () => playerLook,
     getName: mpName,
-    // Toggles, because the 👕 button that would otherwise close it lives in
-    // the HUD, underneath the menu.
-    onCustomise: () => {
-      kitPanel ??= createKitPanel(window.golfer);
-      kitOpen = !kitOpen;
-      kitPanel.setOpen(kitOpen);
-      menu.setKitOpen(kitOpen);
-    },
+    // The customise screen owns the layout; kit.js only fills it in.
+    buildKit: (host) => { kitPanel = createKitControls(window.golfer, host); },
     // Starting a solo round means you are no longer looking for anyone.
     onStart: (opts) => { match.leave(); startRound(opts); },
     onBrowse: () => {
