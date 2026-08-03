@@ -45,6 +45,7 @@ export class Match {
 
     this.onStatus = null;    // (text, kind)
     this.onAdvance = null;   // both players finished the hole
+    this.onMatched = null;   // (meta) paired — build the host's course
 
     this._ghost = null;
     this._ghostTo = new THREE.Vector3();
@@ -65,14 +66,25 @@ export class Match {
   }
 
   // ------------------------------------------------------------ lifecycle
-  async find(name) {
-    this.onStatus?.('Looking for an opponent…', 'busy');
+  /**
+   * Connect and start listening to the lobby, without joining anything. The
+   * menu shows a list of open lobbies before you commit, so connecting and
+   * committing have to be separate steps.
+   */
+  async browse(name) {
     try {
       await this.net.connect(name);
+      return true;
     } catch {
       this.onStatus?.('Could not reach a matchmaking broker — check your connection.', 'error');
+      return false;
     }
   }
+
+  quick(meta) { this.net.quick(meta); this.onStatus?.('Looking for an opponent…', 'busy'); }
+  host(meta) { this.net.host(meta); this.onStatus?.('Lobby open — waiting for someone to join…', 'busy'); }
+  join(id) { return this.net.join(id); }
+  set onLobbies(fn) { this.net.onLobbies = fn; }
 
   leave() {
     clearTimeout(this._swingTimer);
@@ -87,12 +99,17 @@ export class Match {
     else if (s === 'matched') {
       this.active = true;
       this.hole = 0;
+      // Whoever hosted decided the course and the time; both sides build the
+      // same world from it. Surfaced rather than applied here, because the
+      // world is main.js's to build.
+      this.meta = d?.meta ?? null;
       this.myTotal = this.oppTotal = 0;
       this._resetHole();
       // Tell them what we look like. Both sides do this on matching, so each
       // renders the other's actual customised golfer rather than a stand-in.
       if (this.myLook) this.net.send({ t: 'look', look: this.myLook });
       this.onStatus?.(`Matched with ${d.opponent}`, 'good');
+      this.onMatched?.(this.meta);
     } else if (s === 'left') {
       this.active = false;
       this._hideGhost();

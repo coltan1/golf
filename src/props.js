@@ -9,6 +9,7 @@
 
 import * as THREE from 'three';
 import { mulberry32, lerp, hash3, clamp, fbm2 } from './util.js';
+import { COURSE } from './courses.js';
 import {
   heightAt, nearest, centreXAt, fairwayHalfWidth, bunkerField, pondField,
   GREEN, HOLE_POS, TEE, WORLD_CX, WORLD_CZ, WORLD_SIZE,
@@ -303,12 +304,17 @@ export function createTrees(toonRamp) {
     }
   };
 
+  // How wooded this course is. A links course with a forest around it is a
+  // parkland course with different hole names, so this scales every pass.
+  const density = COURSE.trees ?? 1;
+  const many = (n) => Math.max(0, Math.round(n * density));
+
   // The hole decides how much ground there is to plant.
   const zNear = TEE.z + 20;
   const zFar = WORLD_CZ - WORLD_SIZE * 0.44;
 
   // Pass A — the treeline proper, biased hard toward the corridor edge.
-  for (let i = 0; i < 1500; i++) {
+  for (let i = 0, n = many(1500); i < n; i++) {
     const z = lerp(zNear, zFar, rnd());
     const side = rnd() < 0.5 ? 1 : -1;
     const off = lerp(16, 95, Math.pow(rnd(), 1.8));
@@ -316,14 +322,14 @@ export function createTrees(toonRamp) {
   }
 
   // Pass B — deep forest behind it.
-  for (let i = 0; i < 2400; i++) {
+  for (let i = 0, n = many(2400); i < n; i++) {
     const z = lerp(zNear + 30, zFar - 20, rnd());
     const side = rnd() < 0.5 ? 1 : -1;
     plant(centreXAt(z) + side * lerp(85, 260, rnd()), z, lerp(0.9, 1.3, rnd()), true);
   }
 
   // Pass C — out to the property line.
-  for (let i = 0; i < 1600; i++) {
+  for (let i = 0, n = many(1600); i < n; i++) {
     const a = rnd() * Math.PI * 2;
     const r = lerp(WORLD_SIZE * 0.20, WORLD_SIZE * 0.50, rnd());
     plant(WORLD_CX + Math.sin(a) * r, WORLD_CZ + Math.cos(a) * r, lerp(1.0, 1.5, rnd()), true);

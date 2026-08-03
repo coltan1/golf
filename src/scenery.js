@@ -13,7 +13,115 @@ import * as THREE from 'three';
 import { mulberry32, lerp, fbm2 } from './util.js';
 import { WORLD_CX, WORLD_CZ } from './course.js';
 
-export const FOG_COLOR = 0xdcf0fa;
+/**
+ * Times of day.
+ *
+ * The sun's offset lives here and nowhere else, which is the whole point of
+ * this table. Three files need to agree about where the sun is — this one
+ * builds the light, main.js re-aims it at the player every frame so the tight
+ * shadow camera follows, and ambience.js points the light shafts down the same
+ * vector. They were three hand-copied constants with a comment on each begging
+ * the next person to keep them in step. Now there is one.
+ *
+ * Elevation is the thing being chosen. Low sun means long shadows and a warm
+ * key against a cool fill, which is most of why sunrise and sunset look the way
+ * they do; the colours follow from that rather than being decoration on top.
+ *
+ * Every offset keeps roughly the same horizontal bearing, because the cel ramp
+ * was tuned against a sun coming from the left — swinging it round would put
+ * open turf on a different band and change the look of the whole course.
+ */
+/**
+ * THE BAND, AND WHY THE LOW SUNS ARE BRIGHTER THAN THEY LOOK
+ *
+ * The ground ramp is sampled at 0.5 + 0.5·dotNL, so flat turf under a sun at
+ * elevation e lands on texel floor((0.5 + 0.5·sin e)·16):
+ *
+ *   38°  →  u 0.81  →  texel 12  →  1.00      (day: what the ramp was tuned to)
+ *   23°  →  u 0.70  →  texel 11  →  0.82
+ *   21°  →  u 0.68  →  texel 10  →  0.82
+ *
+ * A low sun therefore loses 18% of its direct term to the band below before
+ * any colour is chosen, which is exactly why the first pass at sunrise and
+ * sunset came out looking like overcast rather than like low light. Raising
+ * the sun to claw it back would cost the long shadows, which are the whole
+ * point. So the two low presets carry an intensity multiplied by 1/0.82 ≈ 1.22
+ * to land back where day sits — 1.62·1.22 ≈ 1.98, 1.70·1.22 ≈ 2.07.
+ *
+ * The fill is pulled down and warmed to match. A cool hemisphere at day
+ * strength neutralises a warm key: it was the second half of why gold light
+ * read as green.
+ */
+export const TIMES = {
+  sunrise: {
+    label: 'Sunrise',
+    // Low and long. 21° puts shadows about two and a half times the height of
+    // whatever casts them.
+    sun: [-150, 61, -62],
+    // Pale gold rather than orange — sunrise is the cooler of the two ends.
+    sunColour: 0xffd9a6,
+    sunIntensity: 1.98,
+    // Fill stays faintly blue, so lit and shadowed ground split warm/cool.
+    hemiSky: 0xc4d6f4,
+    hemiGround: 0x9ec489,
+    hemiIntensity: 0.92,
+    rim: 0xffc9a0,
+    fog: 0xf2e2d4,
+    sky: [
+      [0.00, '#4f86c6'], [0.26, '#8fb6dd'], [0.55, '#dcc6c4'],
+      [0.80, '#f6d6b4'], [1.00, '#ffe6c6'],
+    ],
+  },
+  day: {
+    label: 'Day',
+    // The original. 38°, late morning, and the angle the ground ramp's bands
+    // were calibrated against.
+    sun: [-135, 114, -55],
+    sunColour: 0xfff0cf,
+    sunIntensity: 1.78,
+    hemiSky: 0xbfdcff,
+    hemiGround: 0x93c97e,
+    hemiIntensity: 1.14,
+    rim: 0xcdecff,
+    fog: 0xdcf0fa,
+    sky: [
+      [0.00, '#5fb4e9'], [0.28, '#8ccdf0'], [0.58, '#b8e2f7'],
+      [0.82, '#d9f0fb'], [1.00, '#e9f7fd'],
+    ],
+  },
+  sunset: {
+    label: 'Sunset',
+    sun: [-146, 68, -58],
+    // The warmest key of the three, and the one that has to survive being
+    // multiplied into green turf.
+    sunColour: 0xffa855,
+    sunIntensity: 2.07,
+    // Lilac fill. Blue here cancels the gold; lilac lets the shadows go cool
+    // without arguing with the key.
+    hemiSky: 0xc3a8d4,
+    hemiGround: 0x9a8664,
+    hemiIntensity: 0.82,
+    rim: 0xffa877,
+    fog: 0xf0d3c0,
+    sky: [
+      [0.00, '#3f6fb4'], [0.24, '#7c9bd0'], [0.52, '#d3a9b8'],
+      [0.78, '#f7b98a'], [1.00, '#ffd9a3'],
+    ],
+  },
+};
+
+let current = TIMES.day;
+
+/** The active time of day. Read by everything that needs the sun. */
+export function timeOfDay() { return current; }
+
+/** Choose a time of day. Takes effect the next time the world is built. */
+export function setTimeOfDay(key) {
+  current = TIMES[key] ?? TIMES.day;
+  return current;
+}
+
+export let FOG_COLOR = 0xdcf0fa;
 
 /** Inverted sphere with a vertical gradient painted into it. */
 export function createSky() {
@@ -21,11 +129,7 @@ export function createSky() {
   cv.width = 4; cv.height = 256;
   const ctx = cv.getContext('2d');
   const g = ctx.createLinearGradient(0, 0, 0, 256);
-  g.addColorStop(0.00, '#5fb4e9');
-  g.addColorStop(0.28, '#8ccdf0');
-  g.addColorStop(0.58, '#b8e2f7');
-  g.addColorStop(0.82, '#d9f0fb');
-  g.addColorStop(1.00, '#e9f7fd');
+  for (const [at, colour] of current.sky) g.addColorStop(at, colour);
   ctx.fillStyle = g;
   ctx.fillRect(0, 0, 4, 256);
 
@@ -60,7 +164,8 @@ export function createLights(scene) {
   // 0.78 band → (1.26 + 1.60·0.78)/π ≈ 0.80 of albedo, which is bright
   // without clipping; the deepest band works out near 0.48, so the steps
   // stay clearly separated instead of collapsing into the tone curve.
-  const hemi = new THREE.HemisphereLight(0xbfdcff, 0x93c97e, 1.14);
+  FOG_COLOR = current.fog;
+  const hemi = new THREE.HemisphereLight(current.hemiSky, current.hemiGround, current.hemiIntensity);
   scene.add(hemi);
 
   // ~38° elevation — late afternoon. Long shadows are most of what makes
@@ -68,8 +173,8 @@ export function createLights(scene) {
   // hold open turf at this angle without it dropping a step (see below).
   // The key is warm and the fill is cool, so lit and shadowed ground differ
   // in hue as well as value rather than just being two brightnesses.
-  const sun = new THREE.DirectionalLight(0xfff0cf, 1.78);
-  sun.position.set(-135, 114, -55);
+  const sun = new THREE.DirectionalLight(current.sunColour, current.sunIntensity);
+  sun.position.set(...current.sun);
   sun.castShadow = true;
   sun.shadow.mapSize.set(2048, 2048);
   sun.shadow.camera.near = 20;
@@ -89,7 +194,7 @@ export function createLights(scene) {
 
   // Kept deliberately weak — a second directional light adds a second set of
   // bands, and two overlapping ramps read as mush.
-  const rim = new THREE.DirectionalLight(0xcdecff, 0.12);
+  const rim = new THREE.DirectionalLight(current.rim, 0.12);
   rim.position.set(110, 60, 140);
   scene.add(rim);
 

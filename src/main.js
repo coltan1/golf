@@ -14,7 +14,7 @@ import {
   HOLE_POS, TEE, PAR, HOLE_LENGTH, HOLE, setHole, POND, CREEK,
 } from './course.js';
 import { createTerrain, createWater, createCreek, makeToonRamp, makeGroundRamp } from './terrain.js';
-import { createSky, createLights, createClouds, createBackdrop, FOG_COLOR } from './scenery.js';
+import { createSky, createLights, createClouds, createBackdrop, FOG_COLOR, timeOfDay, setTimeOfDay } from './scenery.js';
 import {
   createTrees, createGrass, createClubhouse, createFlag, createTeeMarkers, createBridge,
   treeMapTexture,
@@ -29,8 +29,9 @@ import { FreeCam } from './freecam.js';
 import { Audio } from './audio.js';
 import { Hud, scoreName } from './hud.js';
 import { createKitPanel } from './kit.js';
+import { createMenu } from './menu.js';
 import { Match } from './match.js';
-import { HOLES, TOTAL_PAR } from './holes.js';
+import { COURSES, COURSE, HOLES, TOTAL_PAR, setCourse } from './courses.js';
 
 // ---------------------------------------------------------------- renderer
 const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
@@ -86,6 +87,20 @@ function disposeWorld() {
 }
 
 /**
+ * Lights hang off the scene rather than the world group — they outlive a hole
+ * change on purpose — so disposeWorld never sees them, and a new time of day
+ * would otherwise stack a second sun on top of the first.
+ */
+function disposeLights() {
+  if (!lights) return;
+  for (const l of [lights.hemi, lights.sun, lights.sun?.target, lights.rim]) {
+    if (l) scene.remove(l);
+  }
+  lights.sun?.shadow?.map?.dispose();
+  lights = null;
+}
+
+/**
  * The player's look, kept outside the world so it survives a hole change —
  * buildWorld throws the whole subtree away and makes a new Golfer each time —
  * and outside the session, because having to restyle every visit would make
@@ -108,6 +123,9 @@ function saveLook(look) {
 }
 
 let playerLook = loadLook();
+let menu = null;
+let kitPanel = null;
+let kitOpen = false;
 
 function buildWorld() {
   const ramp = makeToonRamp();
@@ -119,6 +137,9 @@ function buildWorld() {
 
   add(createSky());
   if (!lights) lights = createLights(scene);   // lights persist across holes
+  // createLights settles FOG_COLOR for the chosen time of day; the scene's fog
+  // was built at module load, before any of that was known.
+  scene.fog.color.set(timeOfDay().fog);
   add(createBackdrop(ramp));
   clouds = add(createClouds());
 
@@ -161,8 +182,7 @@ function initOnce() {
   input = new SwipeSwing(renderer.domElement);
   freeCam = new FreeCam(camera, renderer.domElement);
   wireInput();
-  createKitPanel(window.golfer);
-  setupMatch();
+  kitPanel ??= createKitPanel(window.golfer);   // the menu may have built it already
 }
 
 // ---------------------------------------------------------------- freecam
@@ -659,9 +679,10 @@ function frame() {
   }
   const focusY = heightAt(focusX, focusZ);
   lights.sun.target.position.set(focusX, focusY, focusZ);
-  // ~38° from the left: shadows fall right and toward the camera, about a
-  // third longer than their caster. Must match createLights().
-  lights.sun.position.set(focusX - 135, focusY + 114, focusZ - 55);
+  // Offset read from the time-of-day table rather than copied, so re-aiming
+  // the sun at the player each frame cannot drift from where it was created.
+  const sunOff = timeOfDay().sun;
+  lights.sun.position.set(focusX + sunOff[0], focusY + sunOff[1], focusZ + sunOff[2]);
   lights.sun.target.updateMatrixWorld();
 
   if (freeCam.active) {
@@ -684,16 +705,19 @@ function frame() {
  * three elements and one callback, and keeping it beside the wiring it depends
  * on is easier to follow than splitting it across two files.
  */
-function setupMatch() {
-  match = new Match(scene);
-  match.myLook = playerLook;
-
-  // A name that persists, so an opponent sees the same person twice.
+/** A name that persists, so an opponent sees the same person twice. */
+function mpName() {
   let name = localStorage.getItem('sunnylinks.name');
   if (!name) {
     name = 'Player ' + Math.floor(1000 + Math.random() * 9000);
     try { localStorage.setItem('sunnylinks.name', name); } catch { /* private mode */ }
   }
+  return name;
+}
+
+function setupMatch() {
+  match = new Match(scene);
+  match.myLook = playerLook;
 
   const style = document.createElement('style');
   style.textContent = `
@@ -724,14 +748,19 @@ function setupMatch() {
   match.onStatus = (text, kind) => {
     status.textContent = text ?? '';
     status.className = 'pill ' + (kind || '') + (text ? ' on' : '');
+    // The HUD is underneath the menu, so anything said while it is up has to
+    // be said there as well or it is said to nobody.
+    if (menu?.visible && text) menu.setStatus(text);
     refreshScore();
   };
   // Both players are in: move on together, from wherever either of them was.
   match.onAdvance = () => goToHole(match.hole % HOLES.length, match.hole === 0);
 
+  // Once you are in a round, this button is only ever a way out. Getting in
+  // happens on the menu, where you can also say what you want to play.
   btn.onclick = () => {
     if (match.active || match.net.state === 'waiting') match.leave();
-    else match.find(name);
+    else showMenu('mp');
   };
   window.addEventListener('beforeunload', () => match.leave());
 }
@@ -769,6 +798,7 @@ window.golfer = {
   set(partial) {
     playerLook = { ...playerLook, ...partial };
     if (golfer) golfer.setLook(playerLook);
+    menu?.refreshLook();
     match?.sendLook(playerLook);
     saveLook(playerLook);
     return { ...playerLook };
@@ -777,6 +807,7 @@ window.golfer = {
     if (!LOOK_PRESETS[name]) return 'unknown preset — try ' + Object.keys(LOOK_PRESETS).join(', ');
     playerLook = { ...DEFAULT_LOOK, ...LOOK_PRESETS[name] };
     if (golfer) golfer.setLook(playerLook);
+    menu?.refreshLook();
     match?.sendLook(playerLook);
     saveLook(playerLook);
     return { ...playerLook };
@@ -857,14 +888,71 @@ function onResize() {
 window.addEventListener('resize', onResize);
 
 let booted = false;
+let started = false;   // has a round ever been built?
+let looping = false;
+
+/**
+ * Build the chosen round and drop into it.
+ *
+ * The course and the time have to be settled before anything is built, because
+ * both are baked in: the routing decides the terrain, and the sun decides the
+ * sky, the fog and the light. Changing either afterwards would mean rebuilding
+ * the world anyway, so this is the one place they are set.
+ */
+function startRound({ course, time }) {
+  setCourse(course);
+  setTimeOfDay(time);
+  disposeLights();            // the sun may have moved; buildWorld makes a new one
+  menu?.hide();
+  if (!started) { started = true; initOnce(); }
+  loadHole(0);
+  hud.hideLoader();
+  clock.getDelta();           // discard the long pause spent building
+  if (!looping) { looping = true; frame(); }
+}
+
+/** Back to the front screen. Leaves any match, because you are leaving it. */
+function showMenu(tab) {
+  if (match.active || match.net.state === 'waiting') match.leave();
+  menu?.show(tab);
+}
+
 function boot() {
   if (booted) return;
   booted = true;
-  initOnce();
-  loadHole(0);
+  setupMatch();
+  menu = createMenu({
+    getLook: () => playerLook,
+    getName: mpName,
+    // Toggles, because the 👕 button that would otherwise close it lives in
+    // the HUD, underneath the menu.
+    onCustomise: () => {
+      kitPanel ??= createKitPanel(window.golfer);
+      kitOpen = !kitOpen;
+      kitPanel.setOpen(kitOpen);
+      menu.setKitOpen(kitOpen);
+    },
+    // Starting a solo round means you are no longer looking for anyone.
+    onStart: (opts) => { match.leave(); startRound(opts); },
+    onBrowse: () => {
+      // Reconnecting would tear down a lobby we are already sitting in.
+      const s = match.net.state;
+      if (s === 'idle' || s === 'closed') match.browse(mpName());
+    },
+    // Only the course and the time travel with a lobby. The name rides on the
+    // advertisement itself, and duplicating it here just gave two answers.
+    onHost: ({ course, time }) => match.host({ course, time }),
+    onQuick: ({ course, time }) => match.quick({ course, time }),
+    onJoin: (id) => match.join(id),
+  });
+  match.onLobbies = (list) => menu.showLobbies(list);
+  // Both sides build the host's course, so the world waits until we know what
+  // it is — which is only once the pairing has actually happened.
+  match.onMatched = (meta) => startRound({
+    course: meta?.course ?? COURSES[0].id,
+    time: meta?.time ?? 'day',
+  });
   hud.hideLoader();
-  clock.getDelta();   // discard the long pause spent building
-  frame();
 }
 
 // Build on the next frame so the loading screen actually paints first.

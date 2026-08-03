@@ -40,7 +40,8 @@ function styleTag() {
   }
   #btnKit:active{transform:scale(.92)}
   #kit{
-    position:fixed; right:14px; top:64px; z-index:40; width:270px; max-width:calc(100vw - 28px);
+    /* Above the main menu (60) as well as the HUD, since it opens over both. */
+    position:fixed; right:14px; top:64px; z-index:70; width:270px; max-width:calc(100vw - 28px);
     max-height:calc(100vh - 120px); overflow-y:auto;
     background:var(--pill); border:1px solid var(--pill-line); border-radius:18px;
     box-shadow:var(--shadow); backdrop-filter:blur(12px) saturate(1.15);

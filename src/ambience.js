@@ -11,13 +11,18 @@
 
 import * as THREE from 'three';
 import { mulberry32, lerp } from './util.js';
+import { timeOfDay } from './scenery.js';
 import {
   heightAt, centreXAt, fairwayHalfWidth, nearest, TEE, WORLD_CZ, WORLD_SIZE,
 } from './course.js';
 
-// The sun sits at (-135, +114, -55) from whatever it is pointed at, so light
-// travels along this. Must match createLights() in scenery.js.
-const SUN_DIR = new THREE.Vector3(135, -114, 55).normalize();
+// Light travels the opposite way to the sun's offset. Derived rather than
+// written out, so shafts cannot end up pointing somewhere the sun is not —
+// which is exactly what would happen the first time the time of day changed.
+function sunDir() {
+  const [x, y, z] = timeOfDay().sun;
+  return new THREE.Vector3(-x, -y, -z).normalize();
+}
 
 // ---------------------------------------------------------------- sun shafts
 /**
@@ -109,7 +114,7 @@ export function createSunRays() {
   }
 
   const cam = new THREE.Vector3();
-  const axis = SUN_DIR.clone();
+  const axis = sunDir();
   const toCam = new THREE.Vector3();
   const wide = new THREE.Vector3();
   const face = new THREE.Vector3();
