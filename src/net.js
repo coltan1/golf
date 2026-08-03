@@ -137,11 +137,20 @@ export class Net {
   }
 
   // ------------------------------------------------------------ ways in
-  /** Pair with anyone else also looking, without a lobby. */
+  /**
+   * Pair with anyone else looking for the same round, without a lobby.
+   *
+   * The course and time go into the shout and both sides check them, so a
+   * quick match plays what you picked. Letting whichever id happened to sort
+   * lower impose its settings paired people faster, but it meant choosing The
+   * Dunes at sunrise and landing on the parkland course at midday — the picker
+   * sits directly above this button, and it has to mean the same thing under
+   * both of them.
+   */
   quick(meta) {
     this.mode = 'quick';
     this.meta = meta ?? null;
-    this._startAdvertising({ t: 'hello' });
+    this._startAdvertising({ t: 'hello', ...(meta ?? {}) });
     this._set('waiting');
   }
 
@@ -212,6 +221,7 @@ export class Net {
       if (this.matchId) return;              // already committed
 
       if (m.t === 'hello' && this.mode === 'quick') {
+        if (m.course !== this.meta?.course || m.time !== this.meta?.time) return;
         // Both sides hear both hellos, so pairing is decided without any
         // conversation: the lower id proposes, the higher waits to be invited.
         if (this.id < m.id) {
