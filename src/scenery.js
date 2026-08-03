@@ -343,6 +343,34 @@ export function createBackdrop(toonRamp) {
     group.add(mesh);
   }
 
+  // Two low islands far out over the water.
+  //
+  // The seaward arc is deliberately empty of ridges, and empty is right — but
+  // completely empty leaves the horizon with nothing to measure the sea
+  // against. These sit at nearly twice the furthest ridge and stand a fifth as
+  // tall, so they read as something a long way off rather than as land you
+  // could reach.
+  if (seaA !== null) {
+    const mat = new THREE.MeshBasicMaterial({ color: 0x7d9fb4, fog: false });
+    const parts = [];
+    const place = new THREE.Matrix4();
+    for (let i = 0; i < 2; i++) {
+      const a = seaA + (i === 0 ? -0.62 : 0.55) + (rnd() - 0.5) * 0.2;
+      const r = 2600 * lerp(0.92, 1.08, rnd());
+      const geo = forestRidgeGeo(rnd, lerp(700, 1100, rnd()), lerp(120, 190, rnd()),
+                                 lerp(260, 400, rnd()));
+      place.makeRotationY(a);
+      place.setPosition(WORLD_CX + Math.sin(a) * r, -30, WORLD_CZ + Math.cos(a) * r);
+      geo.applyMatrix4(place);
+      parts.push(geo);
+    }
+    const isles = new THREE.Mesh(merge(parts), mat);
+    isles.castShadow = isles.receiveShadow = false;
+    isles.frustumCulled = false;
+    isles.renderOrder = -90;
+    group.add(isles);
+  }
+
   return group;
 }
 

@@ -232,6 +232,7 @@ export function createTerrain(renderer, toonRamp, treeMap) {
     shader.uniforms.uRockAmt = { value: OCEAN ? 1.0 : 0.0 };
     // And everything under the sea, however flat.
     shader.uniforms.uRockTop = { value: OCEAN ? OCEAN.y + 2.0 : -9999.0 };
+    shader.uniforms.uSeaY = { value: OCEAN ? OCEAN.y : -9999.0 };
     shader.uniforms.uRock  = { value: colorUniform(SURFACE_COLORS.rock) };
     shader.uniforms.uRockB = { value: colorUniform(SURFACE_COLORS.rockLit) };
     shader.uniforms.uStraw  = { value: colorUniform(SURFACE_COLORS.straw) };
@@ -339,6 +340,7 @@ export function createTerrain(renderer, toonRamp, treeMap) {
         uniform float uStrawAmt;
         uniform float uRockAmt;
         uniform float uRockTop;
+        uniform float uSeaY;
         uniform vec3 uRock;
         uniform vec3 uRockB;
         uniform vec3 uStraw;
@@ -544,6 +546,33 @@ export function createTerrain(renderer, toonRamp, treeMap) {
           if (rockM > 0.001) {
             float rn = ccNoise(vWorld * 0.09) * 0.6 + ccNoise(vWorld * 0.34) * 0.4;
             vec3 rockCol = mix(uRock, uRockB, smoothstep(0.32, 0.78, rn));
+
+            // Wet rock, then surf.
+            //
+            // Painted on the land rather than on the water, which is the only
+            // place it can go: the sea is one flat plane six thousand yards
+            // across and has no idea where the coast is, whereas every pixel
+            // of rock knows exactly how far above the waterline it sits.
+            float ccWet = 1.0 - smoothstep(uSeaY + 3.0, uSeaY + 14.0, vWorldY);
+            rockCol *= mix(1.0, 0.58, ccWet);
+            // A ragged band a yard or so either side of the waterline. Broken
+            // up by noise, because a clean line reads as a painted stripe and
+            // surf is never one — it is torn.
+            // Centred well above the waterline rather than on it: half a band
+            // drawn at sea level is under the water and never seen, so a
+            // symmetric one about the surface shows only its top half and
+            // reads as a hairline.
+            float ccBand = 1.0 - smoothstep(0.0, 5.5, abs(vWorldY - uSeaY - 2.0));
+            // Height goes into the noise coordinate, not just into the band.
+            // vWorld is XZ, and on a face that is nearly vertical XZ barely
+            // changes as you climb it — so noise sampled from XZ alone is
+            // constant up any given column and the foam came out as pale
+            // stripes painted down the cliff.
+            vec2 ccFp = vec2(vWorld.x * 0.26 + vWorld.y * 0.26, vWorldY * 0.62);
+            float ccFn = ccNoise(ccFp) * 0.62 + ccNoise(ccFp * 2.7) * 0.38;
+            float ccFoam = ccBand * smoothstep(0.34, 0.72, ccFn + ccBand * 0.32);
+            rockCol = mix(rockCol, vec3(0.95, 0.98, 0.99), ccFoam);
+
             diffuseColor.rgb = mix(diffuseColor.rgb, rockCol, rockM);
           }
 

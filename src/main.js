@@ -17,6 +17,7 @@ import { createTerrain, createWater, createOcean, createCreek, makeToonRamp, mak
 import { createSky, createLights, createClouds, createBackdrop, FOG_COLOR, timeOfDay, setTimeOfDay } from './scenery.js';
 import {
   createTrees, createGrass, createClubhouse, createFlag, createTeeMarkers, createBridge,
+  createSeaStacks,
   treeMapTexture,
 } from './props.js';
 import { Golfer, DEFAULT_LOOK, LOOK_PRESETS } from './golfer.js';
@@ -152,6 +153,7 @@ function buildWorld() {
   // dimensions, so neither may be called when that feature is absent.
   water = POND ? add(createWater()) : null;
   ocean = OCEAN ? add(createOcean()) : null;
+  if (OCEAN) add(createSeaStacks(ramp));
   creek = CREEK ? add(createCreek()) : null;
   if (CREEK) { const b = createBridge(ramp); if (b) add(b); }
 

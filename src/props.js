@@ -13,7 +13,7 @@ import { COURSE } from './courses.js';
 import {
   heightAt, nearest, centreXAt, fairwayHalfWidth, bunkerField, pondField, shoreEdge,
   GREEN, HOLE_POS, TEE, WORLD_CX, WORLD_CZ, WORLD_SIZE,
-  greenEdge, bunkerEdge, CREEK,
+  greenEdge, bunkerEdge, CREEK, OCEAN,
 } from './course.js';
 
 // ---------------------------------------------------------------- geometry
@@ -674,6 +674,92 @@ export function createTrees(toonRamp) {
     group.add(shellMesh);
   }
 
+  return group;
+}
+
+/**
+ * Sea stacks — the lumps of lava left standing offshore when the rest of the
+ * headland went.
+ *
+ * Placed by rejection rather than by walking the coastline: `shoreEdge` already
+ * says how far inland any point is, so throwing darts at the water and keeping
+ * the ones that land in a band just off the rocks needs no new geometry and
+ * cannot drift out of step with where the cliff actually ended up.
+ *
+ * They are the one thing on this course that sits *in* the water and so the one
+ * thing that gives it a scale. Without them the sea is a flat blue plane and
+ * could be any size at all.
+ */
+export function createSeaStacks(toonRamp) {
+  const group = new THREE.Group();
+  group.name = 'seaStacks';
+  if (!OCEAN) return group;
+
+  const rnd = mulberry32(60413);
+  const zNear = TEE.z + 30;
+  const zFar = WORLD_CZ - WORLD_SIZE * 0.34;
+  const picks = [];
+
+  for (let i = 0; i < 900 && picks.length < 34; i++) {
+    const z = lerp(zNear, zFar, rnd());
+    // Straight out from the centreline, so the darts land in the water rather
+    // than mostly inland where they would all be thrown away.
+    const out = lerp(6, 120, Math.pow(rnd(), 1.4));
+    const x = centreXAt(z) + OCEAN.seaward.x * out + lerp(-24, 24, rnd());
+    const zz = z + OCEAN.seaward.z * out;
+    const se = shoreEdge(x, zz);
+    // Off the rocks but not out to sea: a stack a hundred yards offshore is a
+    // island, and this is a coastline, not an archipelago.
+    if (se > -6 || se < -95) continue;
+    picks.push({ x, z: zz, se });
+  }
+
+  if (!picks.length) return group;
+
+  // Four sides, so every stack is a chunk with flat faces that catch the cel
+  // ramp differently — a smooth cone would shade as one band and read as a
+  // traffic cone.
+  const geo = new THREE.ConeGeometry(1, 1, 5, 2);
+  const p = geo.attributes.position;
+  for (let i = 0; i < p.count; i++) {
+    const h = hash3(p.getX(i) * 9.1, p.getY(i) * 7.7, p.getZ(i) * 5.3);
+    p.setXYZ(i, p.getX(i) * (0.72 + h * 0.56), p.getY(i), p.getZ(i) * (0.72 + h * 0.56));
+  }
+  geo.computeVertexNormals();
+  geo.translate(0, 0.5, 0);
+
+  const mesh = new THREE.InstancedMesh(
+    geo,
+    new THREE.MeshToonMaterial({ color: 0xffffff, gradientMap: toonRamp, flatShading: true }),
+    picks.length
+  );
+
+  const m = new THREE.Matrix4();
+  const q = new THREE.Quaternion();
+  const e = new THREE.Euler();
+  const pos = new THREE.Vector3();
+  const scl = new THREE.Vector3();
+  const col = new THREE.Color();
+
+  picks.forEach((s, i) => {
+    // Bigger close in, where they are the ruins of the cliff, and lower
+    // further out where only the stubborn ones are left.
+    const near = 1 - Math.min(1, -s.se / 95);
+    const r = lerp(2.6, 7.5, rnd()) * lerp(0.6, 1.0, near);
+    const h = lerp(5, 21, rnd()) * lerp(0.45, 1.0, near);
+    e.set(lerp(-0.10, 0.10, rnd()), rnd() * Math.PI * 2, lerp(-0.10, 0.10, rnd()));
+    // Based below the waterline so the sea meets rock rather than a floating rim.
+    m.compose(pos.set(s.x, OCEAN.y - 5, s.z), q.setFromEuler(e), scl.set(r, h, r));
+    mesh.setMatrixAt(i, m);
+    // The same weathered lava as the cliff, and the same spread of tone.
+    col.setHSL(0.08, lerp(0.04, 0.10, rnd()), lerp(0.20, 0.33, rnd()));
+    mesh.setColorAt(i, col);
+  });
+  mesh.instanceMatrix.needsUpdate = true;
+  if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
+  mesh.castShadow = false;
+  mesh.frustumCulled = false;
+  group.add(mesh);
   return group;
 }
 

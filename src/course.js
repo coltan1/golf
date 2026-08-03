@@ -684,8 +684,10 @@ export const SURFACE_COLORS = {
   // it sits in tree shade nearly all day.
   // Weathered lava at the cliff edge. Dark, but not black: in this light a
   // true black reads as a hole cut in the ground rather than as rock.
-  rock:     [0x4a, 0x45, 0x40],
-  rockLit:  [0x6d, 0x66, 0x5c],
+  // Cool, not warm. A neutral grey turns brown the moment a low sun
+  // multiplies into it, and brown rock reads as mud rather than as lava.
+  rock:     [0x3c, 0x40, 0x46],
+  rockLit:  [0x5c, 0x62, 0x6a],
   // Dry native scrub above the cliff — the tan fringe in every photograph of
   // a course like this, and the thing that keeps the green from running
   // straight into the blue.
