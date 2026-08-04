@@ -1174,6 +1174,22 @@ export function createLighthouse(toonRamp) {
 
   group.position.set(best.x, heightAt(best.x, best.z) - 0.4, best.z);
   group.traverse((o) => { if (o.isMesh) o.castShadow = true; });
+
+  // It flashes. A lighthouse that does not is a striped tower.
+  //
+  // Every four seconds, and the flash is short — a long slow pulse reads as a
+  // lamp on a dimmer, where the real thing is dark, dark, dark, bright. The
+  // curve is the top of a sine raised to a power, which is the cheapest way to
+  // get a long trough and a brief peak out of one number.
+  const lamp = lantern.material;
+  const base = new THREE.Color(0x8a7a52);
+  const hot = new THREE.Color(0xfff3c4);
+  let t = 0;
+  group.userData.tick = (dt) => {
+    t += dt;
+    const k = Math.pow(Math.max(0, Math.sin(t * (Math.PI * 2) / 4.2)), 12);
+    lamp.color.copy(base).lerp(hot, k);
+  };
   return group;
 }
 

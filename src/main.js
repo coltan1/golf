@@ -72,7 +72,7 @@ const hud = new Hud();
 const audio = new Audio();
 
 // ---------------------------------------------------------------- world
-let cart, cartCtl, driveT = 0;
+let cart, cartCtl, driveT = 0, lighthouse = null;
 let terrain, water, ocean, spray, creek, clouds, flag, clubhouse, golfer, ball, rig, aimLine, input, lights, freeCam;
 let sunRays, fliers, motes;
 let match = null;
@@ -166,9 +166,9 @@ function buildWorld() {
     add(createSeaStacks(ramp));
     add(createLavaRocks(ramp));
     add(createCliffRail(ramp));
-    add(createLighthouse(ramp));
+    lighthouse = add(createLighthouse(ramp));
     spray = add(createSpray());
-  } else spray = null;
+  } else { spray = null; lighthouse = null; }
   creek = CREEK ? add(createCreek()) : null;
   if (CREEK) { const b = createBridge(ramp); if (b) add(b); }
 
@@ -408,12 +408,14 @@ function beginDrive() {
 
   rig.setMode('drive');
   cartCtl.setActive(true);
+  audio.engineOn();
   hud.hint('Drive to your ball', 0);
 }
 
 /** Park, get out, and play. */
 function arriveAtBall() {
   cartCtl.setActive(false);
+  audio.engineOff();
   cart.speed = 0;
   refreshShot({ pop: true });
 
@@ -751,6 +753,7 @@ function frame() {
   if (water) water.userData.tick(time);
   if (ocean) ocean.userData.tick(time);
   if (spray) spray.userData.tick(dt);
+  if (lighthouse?.userData.tick) lighthouse.userData.tick(dt);
   if (creek) creek.userData.tick(time);
   flag.userData.tick(time);
   clubhouse.userData.tick(dt);
@@ -800,6 +803,7 @@ function frame() {
     driveT += dt;
     cart.update(dt, cartCtl.read());
     cartCtl.setFuel(cart.boost);
+    audio.engineDrive(Math.min(1, Math.abs(cart.speed) / 13.5), cart.boosting);
     if (match?.active && match.oppCart) {
       const hit = cart.collide(match.oppCart);
       if (hit > 2.2 && time - (game.lastRam ?? -9) > 0.6) {
@@ -811,6 +815,13 @@ function frame() {
     match?.reportCart(cart);
 
     const d = Math.hypot(cart.pos.x - ball.pos.x, cart.pos.z - ball.pos.z);
+    // A number that goes down. "Drive to your ball" is an instruction; the
+    // distance is information, and on a five-hundred-yard hole the difference
+    // between the two is whether the drive has a shape.
+    if (time - (game.lastDriveHint ?? -9) > 0.25) {
+      game.lastDriveHint = time;
+      hud.hint(`${Math.max(0, Math.round(d))} yards to your ball`, 0);
+    }
     // Near enough, slow enough. Requiring a full stop made every arrival end
     // in a fiddle; requiring only proximity meant you flew past at speed and
     // the shot began facing backwards.

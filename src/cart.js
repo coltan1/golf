@@ -338,8 +338,14 @@ export class Cart {
     // the eye reads a leaning vehicle as one that is sliding, whether or not
     // it is. It is nearly flat now, and the big lean is reserved for an actual
     // drift, where it is telling the truth.
-    const want = -this.steer * f * 0.045 - Math.sign(this.steer || 1) * this.slip * 0.42;
-    this.lean = lerp(this.lean, clamp(want, -0.30, 0.30), 1 - Math.exp(-8 * dt));
+    // Cross-slope, on top of the cornering roll. A cart traversing a bank
+    // sits on the bank — without it the only thing on the course that ignores
+    // the ground it is standing on is the vehicle, which is backwards.
+    const across = -(Math.cos(this.heading) * g.gx + Math.sin(this.heading) * g.gz);
+    const want = -this.steer * f * 0.045
+               - Math.sign(this.steer || 1) * this.slip * 0.42
+               + clamp(across * 0.55, -0.16, 0.16);
+    this.lean = lerp(this.lean, clamp(want, -0.34, 0.34), 1 - Math.exp(-8 * dt));
     this.pitch = lerp(this.pitch, clamp(-along * 0.6, -0.22, 0.22), 1 - Math.exp(-5 * dt));
     this._apply();
   }

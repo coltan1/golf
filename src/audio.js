@@ -294,6 +294,63 @@ export class Audio {
    * Air moving past the club on the way down. Fires *before* contact, so it
    * has somewhere to lead to.
    */
+  // ---------------------------------------------------------------- engine
+  /**
+   * The cart's motor, as one sustained voice rather than a stream of one-shots.
+   *
+   * Everything else in here is a hit — a strike, a splash, a footfall — and the
+   * shape of this file is built around firing and forgetting. A motor is the
+   * opposite: it starts, it runs, and its pitch is a continuous function of
+   * something the game already knows. So it gets its own three nodes, held for
+   * as long as the drive lasts, and `engineDrive` moves them.
+   *
+   * Two saws a few cents apart through a low filter. One saw is a test tone;
+   * the beating between two is what makes it a machine.
+   */
+  engineOn() {
+    if (!this.ctx || this._eng) return;
+    const t = this.ctx.currentTime;
+    const g = this.ctx.createGain();
+    g.gain.value = 0;
+    const lp = this.ctx.createBiquadFilter();
+    lp.type = 'lowpass';
+    lp.frequency.value = 420;
+    lp.Q.value = 0.7;
+    const a = this.ctx.createOscillator();
+    const b = this.ctx.createOscillator();
+    a.type = b.type = 'sawtooth';
+    a.frequency.value = 46;
+    b.frequency.value = 46 * 1.007;
+    a.connect(lp); b.connect(lp);
+    lp.connect(g).connect(this.master);
+    a.start(t); b.start(t);
+    this._eng = { a, b, g, lp };
+  }
+
+  /** `v` is 0..1 of top speed; `boost` widens the filter and lifts the pitch. */
+  engineDrive(v = 0, boost = false) {
+    if (!this._eng) return;
+    const t = this.ctx.currentTime;
+    const { a, b, g, lp } = this._eng;
+    // Idle is audible, so the cart is never silent while you are sitting in it.
+    const hz = 44 + v * 78 + (boost ? 16 : 0);
+    a.frequency.setTargetAtTime(hz, t, 0.08);
+    b.frequency.setTargetAtTime(hz * 1.007, t, 0.08);
+    lp.frequency.setTargetAtTime(380 + v * 900 + (boost ? 420 : 0), t, 0.10);
+    g.gain.setTargetAtTime(0.028 + v * 0.045, t, 0.10);
+  }
+
+  engineOff() {
+    if (!this._eng) return;
+    const { a, b, g } = this._eng;
+    const t = this.ctx.currentTime;
+    // Faded rather than cut. Stopping an oscillator at full gain is a click,
+    // and a click at the end of every drive is the loudest thing in the game.
+    g.gain.setTargetAtTime(0, t, 0.12);
+    a.stop(t + 0.6); b.stop(t + 0.6);
+    this._eng = null;
+  }
+
   whoosh(power = 1) {
     const p = clamp01(power);
     this._noise({ colour: 'brown', peak: 0.035 + p * 0.05, attack: 0.10, decay: 0.16,
