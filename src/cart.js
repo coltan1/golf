@@ -30,14 +30,25 @@ import { clamp, lerp } from './util.js';
 // enough that you can place it beside a ball without fighting it.
 const TOP_SPEED = 13.5;
 const REVERSE_SPEED = 5.0;
-const ACCEL = 11.0;
-const BRAKE = 20.0;
-const DRAG = 0.9;
+// Two and a half seconds to top speed, not one. Eleven yards a second squared
+// is about a g, which is a sports car — it made the cart feel weightless, and
+// weightless is most of what "not normal" means for a vehicle.
+const ACCEL = 7.0;
+const BRAKE = 14.0;
+// And it coasts. At 0.9 a released throttle stopped it in about a second,
+// which reads as an engine brake nobody asked for; a cart rolls.
+const DRAG = 0.55;
+
 // Turn rate falls away with speed. A cart that turns as hard at full pelt as
 // it does at walking pace feels like it is on ice, and one that cannot turn
 // when stopped cannot be parked.
-const TURN_SLOW = 2.5;
-const TURN_FAST = 1.25;
+//
+// These were nearly twice as high and the cart span like a shopping trolley.
+// The number that matters is the turning circle at speed — radius is speed
+// over turn rate, so 13.5 over 0.72 is about nineteen yards, which is a wide
+// sweeping arc rather than a pirouette.
+const TURN_SLOW = 1.55;
+const TURN_FAST = 0.72;
 
 // Boost. A shade over half again, which is enough to feel and not so much
 // that the cart becomes a different vehicle you have to relearn.
@@ -248,20 +259,44 @@ export class Cart {
     else if (th < -0.01) this.speed -= (this.speed > 0 ? BRAKE : ACCEL * 0.7) * -th * dt;
     else this.speed -= this.speed * DRAG * dt;
 
-    // Gravity along the slope. Only worth having on a real hill, so the
-    // deadband keeps the cart from creeping on ground that merely undulates.
+    // Gravity along the slope.
+    //
+    // This was the loudest wrong thing about the handling. A fairway rolls
+    // through gradients of a tenth all over it, and at the old deadband of
+    // 0.04 and a multiplier of nine that is nearly a yard a second squared of
+    // free acceleration almost everywhere — the cart crept off on its own,
+    // sped up and slowed down for no visible reason, and never held a steady
+    // speed. A real cart on ordinary undulation does none of that.
+    //
+    // So: a deadband wide enough to ignore anything that is not a hill, a
+    // third of the pull, and rolling resistance underneath it so what is left
+    // settles at a slow roll instead of accelerating for ever.
     const g = gradientAt(this.pos.x, this.pos.z);
     const along = -(Math.sin(this.heading) * g.gx - Math.cos(this.heading) * g.gz);
-    if (Math.abs(along) > 0.04) this.speed += along * 9.0 * dt;
+    let pull = 0;
+    if (Math.abs(along) > 0.11) {
+      pull = (along - Math.sign(along) * 0.11) * 3.2;
+      this.speed += pull * dt;
+      this.speed -= this.speed * 0.5 * dt;      // rolling resistance
+    }
 
     this.speed = clamp(this.speed, -REVERSE_SPEED * grip, top);
-    if (Math.abs(this.speed) < 0.04 && Math.abs(th) < 0.01) this.speed = 0;
+    // Snapped to a dead stop only when nothing is pushing it. Left
+    // unconditional, this ate the slope entirely: gravity adds a few
+    // thousandths of a yard a second per frame, which is below the threshold,
+    // so every frame zeroed it again and the cart sat motionless on a
+    // one-in-five hill.
+    if (Math.abs(this.speed) < 0.04 && Math.abs(th) < 0.01 && Math.abs(pull) < 0.05) {
+      this.speed = 0;
+    }
 
     // Turn rate falls off with speed, and reverses when reversing, because a
     // cart backing up steers the other way and everyone expects it to.
     const f = Math.min(1, Math.abs(this.speed) / TOP_SPEED);
     const rate = lerp(TURN_SLOW, TURN_FAST, f) * (this.drifting ? DRIFT_TURN : 1);
-    const moving = Math.min(1, Math.abs(this.speed) / 1.2);
+    // Steering fades in from a crawl rather than from walking pace, so the
+    // last yard of parking is still steerable.
+    const moving = Math.min(1, Math.abs(this.speed) / 0.7);
     this.heading += this.steer * rate * dt * moving * Math.sign(this.speed || 1);
 
     // Travel chases heading. The rate is the whole drift model: fast enough
