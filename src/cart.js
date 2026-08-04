@@ -23,6 +23,21 @@
 import * as THREE from 'three';
 import { heightAt, gradientAt, surfaceAt, isOutOfBounds, waterLevelAt } from './course.js';
 import { clamp, lerp } from './util.js';
+import { rampHeightAt } from './ramps.js';
+
+/**
+ * The height the wheels sit at: the ground, or a ramp standing on it.
+ *
+ * Ramps are deliberately not part of the terrain — heightAt drives mowing
+ * lines, lies, grass and tree placement, and a ramp is none of those. So the
+ * cart is the one thing that has to know about both, and it takes whichever is
+ * higher. Everything else in the game carries on seeing only the ground.
+ */
+function surfaceY(x, z) {
+  const g = heightAt(x, z);
+  const r = rampHeightAt(x, z);
+  return r > g ? r : g;
+}
 
 // ---------------------------------------------------------------- handling
 //
@@ -231,7 +246,7 @@ export class Cart {
   set visible(v) { this.root.visible = v; }
 
   place(x, z, heading) {
-    this.pos.set(x, heightAt(x, z), z);
+    this.pos.set(x, surfaceY(x, z), z);
     this.heading = heading ?? 0;
     this.travel = this.heading;
     this.slip = 0;
@@ -386,7 +401,7 @@ export class Cart {
     // cart keeps the upward speed the crest gave it.
     // `ground` is already the surface *type* a few lines up; this is the
     // height, and the two wanting the same name is how the collision happened.
-    const groundY = heightAt(nx, nz);
+    const groundY = surfaceY(nx, nz);
     const groundVy = dt > 0 ? (groundY - this.pos.y) / dt : 0;
 
     if (this.airborne) {
@@ -450,7 +465,7 @@ export class Cart {
     const k = 1 - Math.exp(-7 * dt);
     this.pos.x = lerp(this.pos.x, this.target.x, k);
     this.pos.z = lerp(this.pos.z, this.target.z, k);
-    this.pos.y = heightAt(this.pos.x, this.pos.z);
+    this.pos.y = surfaceY(this.pos.x, this.pos.z);
     // Shortest way round, or a cart that crosses due south spins the long way.
     let d = ((this.target.h - this.heading + Math.PI) % (Math.PI * 2)) - Math.PI;
     if (d < -Math.PI) d += Math.PI * 2;

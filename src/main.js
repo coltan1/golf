@@ -26,6 +26,7 @@ import { SwipeSwing } from './input.js';
 import { CameraRig } from './camerarig.js';
 import { AimLine } from './aimline.js';
 import { Cart, createCartControls, HIT_RADIUS } from './cart.js';
+import { createRamps, clearRamps } from './ramps.js';
 import { createSunRays, createButterflies, createSeagulls, createMotes, createSpray } from './ambience.js';
 import { FreeCam } from './freecam.js';
 import { Audio } from './audio.js';
@@ -97,6 +98,8 @@ function disposeWorld() {
   });
   scene.remove(worldGroup);
   worldGroup = null;
+  // The ramp list outlives the meshes it was built with, so it has to be told.
+  clearRamps();
 }
 
 /**
@@ -185,6 +188,10 @@ function buildWorld() {
   clubhouse = add(createClubhouse(ramp));
   add(createTeeMarkers(ramp));
 
+  // Ramps before the cart, because the cart reads their surface the moment it
+  // is placed.
+  add(createRamps(ramp, game.holeIndex + 1));
+
   flag = add(createFlag(ramp));
 
   golfer = new Golfer(ramp, playerLook);
@@ -193,7 +200,10 @@ function buildWorld() {
   // The cart lives in the world group, so a hole change throws it away with
   // everything else and the next hole gets a clean one at the tee.
   cart = new Cart(worldGroup, { colour: 0xf4f6f8, ramp });
-  cart.onLand = (impact) => audio.bounce(clamp(impact, 0.2, 1));
+  cart.onLand = (impact) => {
+    audio.bounce(clamp(impact, 0.2, 1));
+    if (impact > 0.55) hud.shot('BIG AIR!', 1.4);
+  };
   cart.onTurbo = () => { audio.whoosh(0.9); hud.shot('TURBO!', 1.2); };
 
   ball = new Ball(worldGroup, ramp);
