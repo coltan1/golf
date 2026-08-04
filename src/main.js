@@ -769,8 +769,25 @@ function frame() {
 
   if (game.state === 'settling') {
     game.settleTimer += dt;
-    if (game.settleTimer > 1.2) beginDrive();
+    // Nobody drives while the other player is still over the ball.
+    //
+    // Shots alternate, so your ball coming to rest hands them the turn — and
+    // without this you would be tearing off down the fairway while they were
+    // trying to hit. Worse, the two of you would be doing it in each other's
+    // way: their camera is on their own ball, and a cart wandering through
+    // that shot is somebody else's turn intruding on yours.
+    //
+    // So the drive waits for the turn to come back. Spectating is already
+    // running here — the camera is on them and the swing is locked out — so
+    // the wait costs nothing and shows you the shot you are waiting for.
+    if (game.settleTimer > 1.2) {
+      if (match?.active && !match.myTurn) game.state = 'waiting';
+      else beginDrive();
+    }
   }
+
+  // The turn came back, or the match ended while we were waiting for it.
+  if (game.state === 'waiting' && (!match?.active || match.myTurn)) beginDrive();
 
   // --- the drive ---
   //
