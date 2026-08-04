@@ -963,6 +963,268 @@ export function createLavaRocks(toonRamp) {
   return group;
 }
 
+/**
+ * Walk the cliff top.
+ *
+ * Returns points a few yards inland of the edge, in order, from the tee end to
+ * the far end. Everything that follows the coastline needs this and none of it
+ * can work the shore polyline out for itself — that lives inside course.js as
+ * an array indexed by centreline sample, with no way to ask "where is the edge
+ * in world coordinates".
+ *
+ * So it is found rather than read: march out from the centreline along the
+ * seaward direction until the ground stops, then bisect for the exact line.
+ * Twelve steps of bisection puts it inside a hundredth of a yard, and it works
+ * for any shore shape including the ones that cut back across the hole.
+ */
+function walkCliff(inland = 5, step = 7) {
+  if (!OCEAN) return [];
+  const out = [];
+  const zNear = TEE.z + 6;
+  const zFar = WORLD_CZ - WORLD_SIZE * 0.30;
+  const sx = OCEAN.seaward.x, sz = OCEAN.seaward.z;
+
+  for (let z = zNear; z > zFar; z -= step) {
+    const cx = centreXAt(z);
+    // The centreline itself is over the water on the carry holes, so start
+    // from the landward side and come out to meet the edge.
+    let lo = -140, hi = 190;
+    if (shoreEdge(cx + sx * lo, z + sz * lo) < inland) continue;   // no land at all
+    if (shoreEdge(cx + sx * hi, z + sz * hi) > inland) continue;   // never runs out
+    for (let i = 0; i < 12; i++) {
+      const mid = (lo + hi) / 2;
+      if (shoreEdge(cx + sx * mid, z + sz * mid) > inland) lo = mid; else hi = mid;
+    }
+    const x = cx + sx * lo, zz = z + sz * lo;
+    const y = heightAt(x, zz);
+    if (y < -2) continue;
+    out.push({ x, y, z: zz });
+  }
+  return out;
+}
+
+/**
+ * Post-and-rope along the cliff edge.
+ *
+ * Every clifftop course has one, and this one needs it twice over: it is the
+ * single detail that says "resort course on a headland" at a glance, and it is
+ * the only thing telling you where the ground ends while you are driving a
+ * cart at fourteen miles an hour with the camera behind you.
+ *
+ * The rope is two spans per gap rather than one, so it sags. A straight bar
+ * between two posts is a fence; the sag is what makes it a rope.
+ */
+export function createCliffRail(toonRamp) {
+  const group = new THREE.Group();
+  group.name = 'cliffRail';
+  if (!OCEAN) return group;
+
+  const line = walkCliff(5.5, 7);
+  if (line.length < 2) return group;
+
+  const rnd = mulberry32(4402);
+  const posts = [];
+  const ropes = [];
+  const POST_H = 1.25;
+
+  for (let i = 0; i < line.length; i++) {
+    const p = line[i];
+    // Nothing across the green or through a bunker.
+    if (greenEdge(p.x, p.z) > -4) continue;
+    if (bunkerEdge(p.x, p.z) > -1) continue;
+    posts.push({ ...p, h: POST_H * lerp(0.94, 1.06, rnd()) });
+  }
+
+  for (let i = 0; i < posts.length - 1; i++) {
+    const a = posts[i], b = posts[i + 1];
+    const d = Math.hypot(b.x - a.x, b.z - a.z);
+    // A jump means the coastline doubled back — a cove, a headland, or a
+    // stretch the green or a bunker took out. Rope does not cross those.
+    if (d > 13) continue;
+    const ay = a.y + a.h * 0.80, by = b.y + b.h * 0.80;
+    const mx = (a.x + b.x) / 2, mz = (a.z + b.z) / 2;
+    const my = (ay + by) / 2 - 0.16;          // the sag
+    ropes.push([a.x, ay, a.z, mx, my, mz]);
+    ropes.push([mx, my, mz, b.x, by, b.z]);
+    // And a lower one, sagging further.
+    const ay2 = a.y + a.h * 0.44, by2 = b.y + b.h * 0.44;
+    const my2 = (ay2 + by2) / 2 - 0.22;
+    ropes.push([a.x, ay2, a.z, mx, my2, mz]);
+    ropes.push([mx, my2, mz, b.x, by2, b.z]);
+  }
+  if (!posts.length) return group;
+
+  const m = new THREE.Matrix4();
+  const q = new THREE.Quaternion();
+  const e = new THREE.Euler();
+  const pos = new THREE.Vector3();
+  const scl = new THREE.Vector3();
+
+  const postGeo = new THREE.CylinderGeometry(0.075, 0.095, 1, 6);
+  postGeo.translate(0, 0.5, 0);
+  const postMesh = new THREE.InstancedMesh(postGeo,
+    new THREE.MeshToonMaterial({ color: 0x8a6440, gradientMap: toonRamp }), posts.length);
+  posts.forEach((p, i) => {
+    e.set(lerp(-0.05, 0.05, rnd()), rnd() * Math.PI, lerp(-0.05, 0.05, rnd()));
+    m.compose(pos.set(p.x, p.y - 0.1, p.z), q.setFromEuler(e), scl.set(1, p.h, 1));
+    postMesh.setMatrixAt(i, m);
+  });
+  postMesh.instanceMatrix.needsUpdate = true;
+  postMesh.castShadow = true;
+  postMesh.frustumCulled = false;
+  group.add(postMesh);
+
+  if (ropes.length) {
+    // A unit cylinder along +Y, so each span is a lookAt away from being in
+    // the right place — cheaper than building a tube per rope.
+    const ropeGeo = new THREE.CylinderGeometry(0.028, 0.028, 1, 5);
+    const ropeMesh = new THREE.InstancedMesh(ropeGeo,
+      new THREE.MeshToonMaterial({ color: 0xd8cbb0, gradientMap: toonRamp }), ropes.length);
+    const a = new THREE.Vector3(), b = new THREE.Vector3(), up = new THREE.Vector3(0, 1, 0);
+    ropes.forEach((r, i) => {
+      a.set(r[0], r[1], r[2]); b.set(r[3], r[4], r[5]);
+      const len = a.distanceTo(b);
+      const dir = b.clone().sub(a).normalize();
+      q.setFromUnitVectors(up, dir);
+      m.compose(a.clone().addScaledVector(dir, len / 2), q, scl.set(1, len, 1));
+      ropeMesh.setMatrixAt(i, m);
+    });
+    ropeMesh.instanceMatrix.needsUpdate = true;
+    ropeMesh.castShadow = false;
+    ropeMesh.frustumCulled = false;
+    group.add(ropeMesh);
+  }
+
+  return group;
+}
+
+/**
+ * A lighthouse on the furthest headland.
+ *
+ * Placed rather than authored: the point on the cliff walk that reaches
+ * furthest out to sea is the headland, whichever hole you are on, and putting
+ * it there means every hole gets one somewhere in its view without nine
+ * hand-placed coordinates that would all need moving the next time a shoreline
+ * changed.
+ *
+ * It is the only tall vertical thing on the course, which is the entire job. A
+ * clifftop hole is a horizontal composition — a flat sea, a flat horizon, a
+ * fairway running along it — and one vertical is what stops that reading as a
+ * postcard rather than a place.
+ */
+export function createLighthouse(toonRamp) {
+  const group = new THREE.Group();
+  group.name = 'lighthouse';
+  if (!OCEAN) return group;
+
+  const line = walkCliff(8, 9);
+  if (line.length < 3) return group;
+
+  // Furthest out along the seaward direction, ignoring the ends of the walk
+  // where it would sit half off the world.
+  let best = null, bestD = -Infinity;
+  for (let i = 2; i < line.length - 2; i++) {
+    const p = line[i];
+    const d = (p.x - WORLD_CX) * OCEAN.seaward.x + (p.z - WORLD_CZ) * OCEAN.seaward.z;
+    // Off the mown ground and clear of the green, and no further than that.
+    //
+    // The first pass wanted twenty-two yards of clearance beyond the fairway
+    // edge and got a lighthouse on no hole at all: the cliff runs between
+    // twenty-six and fifty yards off these centrelines, which is inside that
+    // margin nearly everywhere. The headland is close to the fairway here.
+    // That is what a clifftop hole is.
+    const n = nearest(p.x, p.z);
+    if (n.dist < fairwayHalfWidth(n.t) + 9) continue;
+    if (Math.hypot(p.x - GREEN.x, p.z - GREEN.z) < 38) continue;
+    if (d > bestD) { bestD = d; best = p; }
+  }
+  if (!best) return group;
+
+  const toon = (c) => new THREE.MeshToonMaterial({ color: c, gradientMap: toonRamp });
+  const H = 17;
+  const at = (y, r) => ({ y, pts: ringPts(12, r) });
+
+  // Tower, in two colours. The bands are separate lofts rather than a texture
+  // because a texture would need a UV set and this needs two cylinders.
+  const band = (y0, y1, c) => {
+    const t0 = y0 / H, t1 = y1 / H;
+    const rAt = (t) => lerp(2.05, 1.25, t);
+    const g = loft([at(y0, rAt(t0)), at(y1, rAt(t1))], { capBottom: false, capTop: false });
+    const mesh0 = mesh(g, toon(c), 'tower');
+    return mesh0;
+  };
+  const bands = [[0, 4.2, 0xf4f2ec], [4.2, 7.6, 0xc4352c], [7.6, 11.0, 0xf4f2ec],
+                 [11.0, 14.0, 0xc4352c], [14.0, 15.4, 0xf4f2ec]];
+  for (const [a, b, c] of bands) group.add(band(a, b, c));
+
+  // Gallery, lantern room and cap.
+  group.add(mesh(loft([at(15.4, 1.55), at(15.9, 2.35), at(16.25, 2.30)]),
+    toon(0x3b4148), 'gallery'));
+  const lantern = mesh(loft([at(16.25, 1.55), at(18.4, 1.5)],
+    { capBottom: false, capTop: false }), new THREE.MeshBasicMaterial({
+      color: 0xffe9a8, toneMapped: false,
+    }), 'lantern');
+  group.add(lantern);
+  group.add(mesh(loft([at(18.4, 1.9), at(19.1, 1.75), at(20.4, 0.12)]),
+    toon(0x2f353b), 'roof'));
+
+  // A keeper's hut at the foot, so the tower is not standing on its own.
+  group.add(mesh(loft([at(0, 3.0), at(2.6, 3.0)]), toon(0xf4f2ec), 'hut'));
+  group.add(mesh(loft([at(2.6, 3.3), at(4.0, 0.3)]), toon(0x8a3a30), 'hutRoof'));
+
+  group.position.set(best.x, heightAt(best.x, best.z) - 0.4, best.z);
+  group.traverse((o) => { if (o.isMesh) o.castShadow = true; });
+  return group;
+}
+
+/** A ring of points, for the lighthouse lofts. */
+function ringPts(n, r) {
+  const pts = [];
+  for (let i = 0; i < n; i++) {
+    const a = (i / n) * Math.PI * 2;
+    pts.push([Math.cos(a) * r, Math.sin(a) * r]);
+  }
+  return pts;
+}
+
+/** Stack rings into a solid. The lighthouse is the only thing here that needs it. */
+function loft(sections, { capBottom = true, capTop = true } = {}) {
+  const n = sections[0].pts.length;
+  const V = sections.map((s) => s.pts.map(([x, z]) => [x, s.y, z]));
+  const pos = [];
+  const push = (p) => pos.push(p[0], p[1], p[2]);
+  for (let i = 0; i < V.length - 1; i++) {
+    const a = V[i], b = V[i + 1];
+    for (let k = 0; k < n; k++) {
+      const k2 = (k + 1) % n;
+      push(a[k]); push(b[k]); push(a[k2]);
+      push(a[k2]); push(b[k]); push(b[k2]);
+    }
+  }
+  const cap = (row, up) => {
+    let cx = 0, cz = 0;
+    for (const p of row) { cx += p[0]; cz += p[2]; }
+    const c = [cx / n, row[0][1], cz / n];
+    for (let k = 0; k < n; k++) {
+      const k2 = (k + 1) % n;
+      if (up) { push(c); push(row[k2]); push(row[k]); }
+      else { push(c); push(row[k]); push(row[k2]); }
+    }
+  };
+  if (capBottom) cap(V[0], false);
+  if (capTop) cap(V[V.length - 1], true);
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  g.computeVertexNormals();
+  return g;
+}
+
+function mesh(geo, mat, name) {
+  const m = new THREE.Mesh(geo, mat);
+  m.name = name;
+  return m;
+}
+
 // ---------------------------------------------------------------- grass
 /**
  * A tuft of three tapered blades, built by hand.

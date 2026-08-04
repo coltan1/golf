@@ -17,7 +17,7 @@ import { createTerrain, createWater, createOcean, createCreek, makeToonRamp, mak
 import { createSky, createLights, createClouds, createBackdrop, FOG_COLOR, timeOfDay, setTimeOfDay, TIMES } from './scenery.js';
 import {
   createTrees, createGrass, createClubhouse, createFlag, createTeeMarkers, createBridge,
-  createSeaStacks, createLavaRocks,
+  createSeaStacks, createLavaRocks, createCliffRail, createLighthouse,
   treeMapTexture,
 } from './props.js';
 import { Golfer, DEFAULT_LOOK, LOOK_PRESETS } from './golfer.js';
@@ -165,6 +165,8 @@ function buildWorld() {
   if (OCEAN) {
     add(createSeaStacks(ramp));
     add(createLavaRocks(ramp));
+    add(createCliffRail(ramp));
+    add(createLighthouse(ramp));
     spray = add(createSpray());
   } else spray = null;
   creek = CREEK ? add(createCreek()) : null;
