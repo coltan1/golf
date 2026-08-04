@@ -21,7 +21,7 @@ import * as THREE from 'three';
 import { mulberry32, lerp, clamp } from './util.js';
 import {
   heightAt, centreXAt, fairwayHalfWidth, nearest, greenEdge, bunkerEdge,
-  TEE, WORLD_CZ, WORLD_SIZE, shoreEdge, OCEAN,
+  TEE, WORLD_CZ, WORLD_SIZE, shoreEdge, OCEAN, HOLE_POS,
 } from './course.js';
 
 // A kicker is short, wide enough to hit without aiming perfectly, and not very
@@ -125,16 +125,21 @@ function chevronGeo() {
 /**
  * Where a ramp is allowed to be.
  *
- * Just off the mown line, not on the green, not in a bunker, not over a cliff,
- * and on ground flat enough that the wedge does not float at one corner. The
- * near edge of the rough is the right place for all of them: far enough that
- * driving straight down the fairway never hits one by accident, near enough
- * that taking one is a small deliberate detour rather than an expedition.
+ * On the fairway, which is the line you are already driving. They started out
+ * in the rough on the theory that a jump should be a detour you choose — and
+ * that was the wrong theory: a detour off the mown line costs speed to reach,
+ * so taking one was slower than ignoring it, and a jump nobody takes is
+ * scenery. On the short grass they are on the way, and the choice becomes
+ * which line to take rather than whether to bother.
+ *
+ * Still never on the green, in a bunker, over a cliff, or on ground uneven
+ * enough that the wedge floats at one corner.
  */
 function placeable(x, z) {
   const n = nearest(x, z);
   const hw = fairwayHalfWidth(n.t);
-  if (n.dist < hw + 2 || n.dist > hw + 26) return false;
+  // Well inside the mown line, with room for the whole footprint.
+  if (n.dist > hw * 0.66) return false;
   if (greenEdge(x, z) > -14) return false;
   if (bunkerEdge(x, z) > -4) return false;
   if (OCEAN && shoreEdge(x, z) < 18) return false;
@@ -171,16 +176,20 @@ export function createRamps(toonRamp, seed = 1) {
     const z = lerp(zNear, zFar, rnd());
     const side = rnd() < 0.5 ? 1 : -1;
     const n0 = nearest(centreXAt(z), z);
-    const off = fairwayHalfWidth(n0.t) + lerp(4, 20, rnd());
+    // Across the fairway rather than down the middle of it, so the corridor
+    // still has a clean line through it and the ramps are a choice.
+    const off = fairwayHalfWidth(n0.t) * lerp(0.12, 0.58, rnd());
     const x = centreXAt(z) + side * off;
     if (!placeable(x, z)) continue;
     // Spread out, or they cluster where the corridor happens to be widest.
     if (ramps.some((r) => Math.hypot(r.x - x, r.z - z) < 55)) continue;
 
-    // Down the hole, with a little skew so they are not all identical.
-    const ahead = nearest(x, z);
-    const face = Math.atan2(centreXAt(z - 40) - x, -(z - 40 - z)) + lerp(-0.35, 0.35, rnd());
-    void ahead;
+    // Straight at the pin.
+    //
+    // Not down the corridor and not skewed: the hole is where you are going,
+    // and a ramp aimed anywhere else throws you off your own line, which makes
+    // hitting it a mistake. Aimed at the flag, the jump is a shortcut.
+    const face = Math.atan2(HOLE_POS.x - x, -(HOLE_POS.z - z));
     ramps.push({
       x, z, base: heightAt(x, z),
       sin: Math.sin(face), cos: Math.cos(face), face,
@@ -188,8 +197,21 @@ export function createRamps(toonRamp, seed = 1) {
   }
   if (!ramps.length) return group;
 
-  const wood = new THREE.MeshToonMaterial({ color: 0xb98a52, gradientMap: toonRamp });
-  const paint = new THREE.MeshToonMaterial({ color: 0xf6c542, gradientMap: toonRamp });
+  // Double-sided, and it has to be.
+  //
+  // The wedge is written out as loose triangles rather than an indexed solid,
+  // and the deck's winding came out facing down. With the mesh rotated the
+  // wrong way that was invisible — you were looking at the faces that happened
+  // to point outward. Aim it correctly and the deck vanishes while its shadow
+  // stays on the grass, which is exactly what a back-faced surface looks like.
+  // Sorting the winding by hand across five separate strips is a worse fix
+  // than telling the renderer to draw both sides of nine hundred triangles.
+  const wood = new THREE.MeshToonMaterial({
+    color: 0xb98a52, gradientMap: toonRamp, side: THREE.DoubleSide,
+  });
+  const paint = new THREE.MeshToonMaterial({
+    color: 0xf6c542, gradientMap: toonRamp, side: THREE.DoubleSide,
+  });
 
   const geo = wedgeGeo();
   const chev = chevronGeo();
@@ -202,9 +224,15 @@ export function createRamps(toonRamp, seed = 1) {
   const p = new THREE.Vector3();
   const one = new THREE.Vector3(1, 1, 1);
   ramps.forEach((r, i) => {
-    // The wedge is authored along +X; `face` is a heading where zero is -Z,
-    // so the rotation that lines them up is face minus a quarter turn.
-    e.set(0, r.face - Math.PI / 2, 0);
+    // The wedge is authored along +X and the ramp runs along (sin f, -cos f).
+    //
+    // A rotation of theta about Y sends +X to (cos theta, -sin theta), so
+    // matching the two needs cos theta = sin f and sin theta = cos f, which is
+    // theta = a quarter turn MINUS f. Minus a quarter turn — the obvious
+    // guess — is a hundred and eighty degrees out, and because the height
+    // function works off sin and cos directly rather than off the mesh, the
+    // result was a ramp you could drive up that was drawn facing backwards.
+    e.set(0, Math.PI / 2 - r.face, 0);
     q.setFromEuler(e);
     m.compose(p.set(r.x, r.base - 0.06, r.z), q, one);
     deck.setMatrixAt(i, m);
