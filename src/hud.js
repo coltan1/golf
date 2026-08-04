@@ -248,7 +248,16 @@ export class Hud {
 
   hideCard() { this.el.card.classList.remove('show'); }
 
-  onAgain(fn) { this.el.btnAgain.addEventListener('click', fn); }
+  /**
+   * Assigned, not added.
+   *
+   * wireHole() re-registers this on every hole load, and addEventListener
+   * stacks — so by the ninth hole the button carried nine handlers and one
+   * press fired all of them. It hid in solo because every copy computed the
+   * same next hole and so did the same harmless thing, but it was a bug from
+   * the first hole change. Assigning onclick replaces.
+   */
+  onAgain(fn) { this.el.btnAgain.onclick = fn; }
 
   onSound(fn) {
     this.el.btnSound.addEventListener('click', () => {

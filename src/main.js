@@ -480,7 +480,17 @@ function onHoled() {
   // hole after that. Pressing it skipped one. Only the slower player ever saw
   // it, because the faster one's card is dismissed by the same advance.
   clearTimeout(game.cardTimer);
+  // Stamped with the hole it belongs to, and it checks on the way out.
+  //
+  // Clearing it when the hole changes was the obvious fix and it did not work,
+  // because of the order two lines below: reportHoled runs first, the match
+  // sees both players in, and the advance clears a timer that has not been
+  // queued yet — onHoled queues it a moment later, on its way out of a hole
+  // that is already over. Ordering is a fragile thing to depend on. Asking
+  // "am I still the hole I was written for" is not.
+  const forHole = game.holeIndex;
   game.cardTimer = setTimeout(() => {
+    if (game.holeIndex !== forHole) return;
     game.total += game.strokes - PAR;
     refreshScore();
     const rel = game.total === 0 ? 'level' : game.total > 0 ? `+${game.total}` : `${game.total}`;
@@ -657,7 +667,10 @@ function wireHole() {
     launchShot(power);
   };
   ball.onRest = () => { match?.reportRest(game.holeIndex, ball.pos, game.strokes); onBallRest(); };
-  ball.onHoled = () => { match?.reportHoled(game.holeIndex, game.strokes); onHoled(); };
+  // Ours first, then theirs. reportHoled can end the hole outright — if both
+  // players are now in, it advances before it returns — so anything local that
+  // belongs to the hole being left has to have happened already.
+  ball.onHoled = () => { onHoled(); match?.reportHoled(game.holeIndex, game.strokes); };
   ball.onEvent = (type, payload) => {
     if (type === 'bounce') audio.bounce(clamp(payload.impact / 14, 0, 1));
     else if (type === 'splash') { audio.splash(); penalty('splash'); }
