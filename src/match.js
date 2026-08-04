@@ -48,6 +48,13 @@ export class Match {
     this.oppTotal = 0;
     this.myDone = false;
     this.oppDone = false;
+    // Has each side played its shot for this exchange?
+    //
+    // Separate from whose turn it is, and from who has holed out, because it
+    // answers a different question: not "may I swing" but "have we both had
+    // our go, so may we both set off". Cleared the moment a drive begins.
+    this.myRested = false;
+    this.oppRested = false;
     // 0 or 1 — the side whose shot the world is waiting on. Compared against
     // net.side, which the pairing already settled.
     this.turn = 0;
@@ -135,6 +142,7 @@ export class Match {
   _resetHole() {
     this.myStrokes = this.oppStrokes = 0;
     this.myDone = this.oppDone = false;
+    this.myRested = this.oppRested = false;
     this._ghostHas = false;
     this._hideGhost();
     // Honour alternates by hole, so neither player tees off first all round.
@@ -145,6 +153,23 @@ export class Match {
     const was = this.turn;
     this.turn = side;
     if (was !== side) this.onTurn?.(this.myTurn);
+  }
+
+  /**
+   * Both players have played, so both may drive.
+   *
+   * A player who has holed out counts as played for the rest of the hole —
+   * they will never rest another ball, and without that the other one waits
+   * for a shot that is never coming and never drives again.
+   */
+  get bothPlayed() {
+    return (this.myRested || this.myDone) && (this.oppRested || this.oppDone);
+  }
+
+  /** Called when a drive starts: the exchange is over, the next one is open. */
+  clearExchange() {
+    this.myRested = false;
+    this.oppRested = false;
   }
 
   /** True when the game should let us swing. */
@@ -175,6 +200,7 @@ export class Match {
     if (!this.active) return;
     this.net.send({ t: 'ball', h: hole, x: +pos.x.toFixed(2), y: +pos.y.toFixed(2),
       z: +pos.z.toFixed(2), s: strokes });
+    this.myRested = true;
     // Our shot is over, so it is theirs — unless they are already in the hole,
     // in which case the turn never leaves us again.
     if (!this.oppDone) this._setTurn(1 - this.net.side);
@@ -219,6 +245,7 @@ export class Match {
     this.myStrokes = strokes;
     if (!this.active || this.myDone) return;
     this.myDone = true;
+    this.myRested = true;
     this.myTotal += strokes;
     this.net.send({ t: 'hole', h: hole, s: strokes });
     if (!this.oppDone) this._setTurn(1 - this.net.side);
@@ -280,11 +307,13 @@ export class Match {
     if (m.t === 'swing') { this._playOpponentSwing(m.p ?? 0.6); return; }
     if (m.t === 'ball') {
       this.oppStrokes = m.s ?? this.oppStrokes;
+      this.oppRested = true;
       this._moveGhost(m.x, m.y, m.z);
       if (!this.myDone) this._setTurn(this.net.side);
     } else if (m.t === 'hole') {
       if (this.oppDone) return;         // duplicate; scores must not double
       this.oppDone = true;
+      this.oppRested = true;
       this.oppStrokes = m.s ?? 0;
       this.oppTotal += this.oppStrokes;
       this._hideGhost();

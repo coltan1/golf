@@ -394,6 +394,7 @@ function launchShot(power) {
  * destination would give the game away.
  */
 function beginDrive() {
+  match?.clearExchange();
   game.state = 'driving';
   driveT = 0;
   golfer.visible = false;
@@ -774,25 +775,32 @@ function frame() {
 
   if (game.state === 'settling') {
     game.settleTimer += dt;
-    // Nobody drives while the other player is still over the ball.
+    // Nobody drives until both have played, and then both drive together.
     //
-    // Shots alternate, so your ball coming to rest hands them the turn — and
-    // without this you would be tearing off down the fairway while they were
-    // trying to hit. Worse, the two of you would be doing it in each other's
-    // way: their camera is on their own ball, and a cart wandering through
-    // that shot is somebody else's turn intruding on yours.
+    // Shots alternate, so your ball coming to rest hands them the turn. Two
+    // rules fall out of that and they are not the same rule. The first is that
+    // you must not set off while they are still over the ball — their camera
+    // is on their own shot, and a cart wandering through it is somebody else's
+    // turn intruding on theirs. The second is that once you have both hit,
+    // there is nothing left to take turns over: you are going to two different
+    // places, so you go at once.
     //
-    // So the drive waits for the turn to come back. Spectating is already
-    // running here — the camera is on them and the swing is locked out — so
-    // the wait costs nothing and shows you the shot you are waiting for.
+    // Waiting on the *turn* only gave the first. It also made driving
+    // alternate, which is half the hole spent watching somebody else steer.
+    // Waiting on both shots gives both: the wait is exactly as long as it has
+    // to be, and then you leave the tee side by side.
+    //
+    // Spectating is already running through the wait — the camera is on them
+    // and the swing is locked out — so it costs nothing and shows you the shot
+    // you are waiting for.
     if (game.settleTimer > 1.2) {
-      if (match?.active && !match.myTurn) game.state = 'waiting';
+      if (match?.active && !match.bothPlayed) game.state = 'waiting';
       else beginDrive();
     }
   }
 
-  // The turn came back, or the match ended while we were waiting for it.
-  if (game.state === 'waiting' && (!match?.active || match.myTurn)) beginDrive();
+  // Both have played, or the match ended while we were waiting.
+  if (game.state === 'waiting' && (!match?.active || match.bothPlayed)) beginDrive();
 
   // --- the drive ---
   //
