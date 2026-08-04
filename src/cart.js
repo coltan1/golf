@@ -25,43 +25,58 @@ import { heightAt, gradientAt, surfaceAt, isOutOfBounds, waterLevelAt } from './
 import { clamp, lerp } from './util.js';
 
 // ---------------------------------------------------------------- handling
-// Yards and seconds. A real cart does about 14 mph, which is 6.8 yards a
-// second — quick enough that a two-hundred-yard walk is half a minute, slow
-// enough that you can place it beside a ball without fighting it.
-const TOP_SPEED = 13.5;
-const REVERSE_SPEED = 5.0;
-// Two and a half seconds to top speed, not one. Eleven yards a second squared
-// is about a g, which is a sports car — it made the cart feel weightless, and
-// weightless is most of what "not normal" means for a vehicle.
-const ACCEL = 7.0;
-const BRAKE = 14.0;
-// And it coasts. At 0.9 a released throttle stopped it in about a second,
-// which reads as an engine brake nobody asked for; a cart rolls.
-const DRAG = 0.55;
+//
+// A real cart does fourteen miles an hour. This one does about thirty, and
+// that is a deliberate lie — the honest number made a three-hundred-yard hole
+// a forty-second commute, and a commute is the thing this mechanic exists to
+// replace. It is still a golf cart in every other respect: it wallows, it
+// coasts, it takes a wide line. It is simply a golf cart that has been got at.
+const TOP_SPEED = 27.0;
+const REVERSE_SPEED = 8.0;
+const ACCEL = 15.0;
+const BRAKE = 22.0;
+// Coasts a long way, which at this speed is most of what makes it feel heavy.
+const DRAG = 0.42;
 
 // Turn rate falls away with speed. A cart that turns as hard at full pelt as
 // it does at walking pace feels like it is on ice, and one that cannot turn
 // when stopped cannot be parked.
 //
-// These were nearly twice as high and the cart span like a shopping trolley.
-// The number that matters is the turning circle at speed — radius is speed
-// over turn rate, so 13.5 over 0.72 is about nineteen yards, which is a wide
+// Raised with the speed rather than left alone, because the number that
+// matters is the circle, not the rate: radius is speed over turn rate, so
+// doubling one and not the other doubles the circle. Twenty-seven over 1.02 is
+// about twenty-six yards, which is a shade wider than before and still a
 // sweeping arc rather than a pirouette.
-const TURN_SLOW = 1.55;
-const TURN_FAST = 0.72;
+const TURN_SLOW = 2.10;
+const TURN_FAST = 1.02;
 
-// Boost. A shade over half again, which is enough to feel and not so much
-// that the cart becomes a different vehicle you have to relearn.
-const BOOST_MUL = 1.55;
-const BOOST_DRAIN = 0.55;      // full tank lasts a bit under two seconds
-const BOOST_REFILL = 0.24;     // and takes four to come back
+// Boost. Nearly double, from a tank that runs out fast and comes back fast —
+// the point is to be spending it constantly, not hoarding it.
+const BOOST_MUL = 1.85;
+const BOOST_DRAIN = 0.62;
+const BOOST_REFILL = 0.30;
 
 // Drift. Holding the button drops the grip and lets the direction of travel
 // lag behind where the nose is pointing; letting go hooks them back together.
 const DRIFT_GRIP = 0.30;       // how fast travel catches up to heading, drifting
 const HOLD_GRIP = 26.0;        // and how fast it does when not — near instant
 const DRIFT_TURN = 1.85;       // the tail comes round faster than the nose
-const DRIFT_SCRUB = 0.62;      // sideways speed you lose per second
+const DRIFT_SCRUB = 0.48;      // sideways speed you lose per second
+
+// A held drift charges a turbo, and letting go spends it.
+//
+// This is the one rule that turns driving from transport into a game. On its
+// own a drift is a cost — you scrub speed and you look good — so nobody does
+// it twice. Paying it back at the end makes the corner the interesting part of
+// the hole, and it is the reason to take the long way round.
+const CHARGE_RATE = 1.5;       // per second at full slip
+const CHARGE_FULL = 1.0;       // enough for a turbo
+const TURBO_KICK = 9.0;        // yards a second, straight into the exit
+
+// Air. Crest a mound at speed and the wheels leave the ground.
+const GRAVITY = 34.0;
+const LAUNCH_SPEED = 11.0;     // below this it just follows the ground
+const LAUNCH_DROP = 4.5;       // yards a second of ground falling away
 
 // How much of the top speed each surface allows.
 const GRIP = {
@@ -195,6 +210,14 @@ export class Cart {
     this.boosting = false;
     this.drifting = false;
     this.slip = 0;             // |heading - travel|, for the render and the dust
+    this.charge = 0;           // drift charge, 0..1+
+    this.turbo = 0;            // seconds of turbo left after a release
+    this.vy = 0;               // vertical speed, only meaningful in the air
+    this.airborne = false;
+    this.squash = 0;           // landing compression, purely for the render
+    this.onLand = null;        // (impact) — main.js hangs a sound on this
+    this.onTurbo = null;       // (charge) — and a flourish on this
+    this._groundVy = 0;
     this.steer = 0;            // -1..1, smoothed
     this.spin = 0;             // wheel rotation, for the render
     this.lean = 0;             // body roll, ditto
@@ -213,6 +236,11 @@ export class Cart {
     this.travel = this.heading;
     this.slip = 0;
     this.speed = 0;
+    this.charge = 0;
+    this.turbo = 0;
+    this.vy = 0;
+    this.airborne = false;
+    this.squash = 0;
     this.bump.set(0, 0, 0);
     this._apply();
   }
@@ -252,7 +280,9 @@ export class Cart {
     this.boost = clamp(
       this.boost + (this.boosting ? -BOOST_DRAIN : BOOST_REFILL) * dt, 0, 1
     );
-    const push = this.boosting ? BOOST_MUL : 1;
+    // A turbo is a short second boost that does not touch the tank.
+    this.turbo = Math.max(0, this.turbo - dt);
+    const push = (this.boosting ? BOOST_MUL : 1) * (this.turbo > 0 ? 1.35 : 1);
     const top = TOP_SPEED * grip * push;
 
     if (th > 0.01) this.speed += ACCEL * grip * push * th * dt;
@@ -274,7 +304,7 @@ export class Cart {
     const g = gradientAt(this.pos.x, this.pos.z);
     const along = -(Math.sin(this.heading) * g.gx - Math.cos(this.heading) * g.gz);
     let pull = 0;
-    if (Math.abs(along) > 0.11) {
+    if (!this.airborne && Math.abs(along) > 0.11) {
       pull = (along - Math.sign(along) * 0.11) * 3.2;
       this.speed += pull * dt;
       this.speed -= this.speed * 0.5 * dt;      // rolling resistance
@@ -296,7 +326,9 @@ export class Cart {
     const rate = lerp(TURN_SLOW, TURN_FAST, f) * (this.drifting ? DRIFT_TURN : 1);
     // Steering fades in from a crawl rather than from walking pace, so the
     // last yard of parking is still steerable.
-    const moving = Math.min(1, Math.abs(this.speed) / 0.7);
+    // Half authority off the ground. None at all is correct and miserable;
+    // full authority is a hovercraft.
+    const moving = Math.min(1, Math.abs(this.speed) / 0.7) * (this.airborne ? 0.45 : 1);
     this.heading += this.steer * rate * dt * moving * Math.sign(this.speed || 1);
 
     // Travel chases heading. The rate is the whole drift model: fast enough
@@ -311,6 +343,21 @@ export class Cart {
     // Sliding sideways scrubs speed off, which is what stops a drift being a
     // free way to go round corners faster than not drifting.
     if (this.drifting) this.speed -= Math.abs(this.speed) * this.slip * DRIFT_SCRUB * dt;
+
+    // Charge while sliding, and pay out the moment the button comes up. A
+    // charge that expired on its own would make the release a deadline, and a
+    // deadline in the middle of a corner is a reason not to take the corner.
+    if (this.drifting) {
+      this.charge += (this.slip / 0.6) * CHARGE_RATE * dt;
+    } else if (this.charge > 0) {
+      if (this.charge >= CHARGE_FULL) {
+        this.speed += TURBO_KICK * Math.min(2, this.charge);
+        this.turbo = 0.55 + Math.min(0.7, this.charge * 0.4);
+        this.boost = Math.min(1, this.boost + 0.35);
+        this.onTurbo?.(this.charge);
+      }
+      this.charge = 0;
+    }
 
     const s = Math.sin(this.travel), c = Math.cos(this.travel);
     let nx = this.pos.x + (s * this.speed + this.bump.x) * dt;
@@ -328,7 +375,54 @@ export class Cart {
 
     this.pos.x = nx;
     this.pos.z = nz;
-    this.pos.y = heightAt(nx, nz);
+
+    // AIR.
+    //
+    // The launch test is not "is there a ramp" — the terrain has no idea what
+    // a ramp is. It is "is the ground falling away faster than I am". While
+    // the wheels are down the cart's vertical speed is whatever the ground
+    // dictates; the moment the ground drops quicker than gravity could pull
+    // the cart after it, the wheels are no longer touching anything, and the
+    // cart keeps the upward speed the crest gave it.
+    // `ground` is already the surface *type* a few lines up; this is the
+    // height, and the two wanting the same name is how the collision happened.
+    const groundY = heightAt(nx, nz);
+    const groundVy = dt > 0 ? (groundY - this.pos.y) / dt : 0;
+
+    if (this.airborne) {
+      this.vy -= GRAVITY * dt;
+      this.pos.y += this.vy * dt;
+      if (this.pos.y <= groundY) {
+        const impact = Math.min(1, Math.abs(this.vy) / 22);
+        this.pos.y = groundY;
+        this.airborne = false;
+        this.vy = 0;
+        this.squash = impact;
+        // A landing costs a little speed, and a heavy one costs more. Free
+        // landings make every mound a shortcut and the ground stops mattering.
+        this.speed *= 1 - impact * 0.22;
+        if (impact > 0.12) this.onLand?.(impact);
+      }
+    } else {
+      this.pos.y = groundY;
+      // A fixed drop rate, not one scaled by speed.
+      //
+      // Scaling it made the test "is this slope steeper than a half" at every
+      // speed, and no fairway anywhere on either course is — the only thing
+      // that ever launched the cart was driving off the cliff. A constant
+      // threshold is speed-dependent in the direction that is actually wanted:
+      // the faster you cross a crest, the harder the ground drops away from
+      // under you, so the same mound launches at full pelt and does not at a
+      // crawl.
+      if (Math.abs(this.speed) > LAUNCH_SPEED && groundVy < -LAUNCH_DROP) {
+        this.airborne = true;
+        // Carrying whatever the run-up was giving, so a fast approach up a
+        // mound throws the cart further than a slow one over the same lip.
+        this.vy = Math.max(0, this._groundVy) * 0.75 + 1.5;
+      }
+    }
+    this._groundVy = this.airborne ? this._groundVy : groundVy;
+    this.squash = Math.max(0, this.squash - dt * 3.2);
 
     // Cosmetics.
     this.spin += (this.speed / WHEEL_R) * dt * (this.drifting ? 1.5 : 1);
@@ -375,7 +469,10 @@ export class Cart {
     this.root.position.copy(this.pos);
     this.root.rotation.set(0, this.heading, 0);
     const hull = this.root.userData.hull;
-    hull.rotation.set(this.pitch, 0, this.lean);
+    // Nose up in the air, and a compression on landing.
+    hull.rotation.set(this.pitch + (this.airborne ? clamp(this.vy * 0.03, -0.3, 0.3) : 0),
+                      0, this.lean);
+    hull.position.y = -this.squash * 0.22;
     for (const w of this.root.userData.wheels) {
       w.userData.spinner.rotation.x = this.spin;
       w.rotation.y = w.userData.steers ? this.steer * 0.45 : 0;

@@ -33,6 +33,9 @@ import { Hud, scoreName } from './hud.js';
 import { createKitControls } from './kit.js';
 import { createMenu } from './menu.js';
 import { createAdminMenu } from './admin.js';
+import {
+  recordHole, bestHole, recordRound, bestRound, scoreStreak, streakNow, resetStreak,
+} from './records.js';
 import { installWoodVars } from './woodtex.js';
 
 // Drawn before anything asks for them. The loading screen is the first thing
@@ -190,6 +193,8 @@ function buildWorld() {
   // The cart lives in the world group, so a hole change throws it away with
   // everything else and the next hole gets a clean one at the tee.
   cart = new Cart(worldGroup, { colour: 0xf4f6f8, ramp });
+  cart.onLand = (impact) => audio.bounce(clamp(impact, 0.2, 1));
+  cart.onTurbo = () => { audio.whoosh(0.9); hud.shot('TURBO!', 1.2); };
 
   ball = new Ball(worldGroup, ramp);
   aimLine = new AimLine(worldGroup);
@@ -347,6 +352,8 @@ function beginHole() {
   match?.placeAtTee(TEE.x, TEE.z);
   hud.hideCard();
   hud.setHole(HOLE.n, HOLE.name, PAR, HOLE_LENGTH);
+  const best = bestHole(COURSE.id, game.holeIndex);
+  if (best !== null) hud.shot(`Your best here: ${best}`, 2.6);
   refreshScore();
   rig.setMode('intro');
   rig.introT = 0;
@@ -470,6 +477,15 @@ function onHoled() {
   aimLine.setVisible(false);
   audio.holed();
   hud.showPower(false);
+  // Called before the card, which is a second and a half away — the moment the
+  // ball drops is when a run either continues or does not, and hearing about
+  // it later is hearing about something that has stopped mattering.
+  if (game.strokes <= PAR) {
+    const run = streakNow() + 1;
+    if (run >= 3) hud.shot(`${run} in a row!`, 2.2);
+  } else if (streakNow() >= 3) {
+    hud.shot(`Run of ${streakNow()} ends`, 2.2);
+  }
   hud.hint('');
   // Held, so it can be called off.
   //
@@ -495,12 +511,42 @@ function onHoled() {
     refreshScore();
     const rel = game.total === 0 ? 'level' : game.total > 0 ? `+${game.total}` : `${game.total}`;
     const last = game.holeIndex === HOLES.length - 1;
+
+    // What this hole was worth beyond the card.
+    //
+    // A round against nobody has no stakes: the number at the end has nothing
+    // to compare itself to, so a bad start makes the rest pointless. Both of
+    // these survive the round going wrong — the hole record is worth chasing
+    // on its own, and the streak makes the eighth hole of a ruined card
+    // matter.
+    const rec = recordHole(COURSE.id, game.holeIndex, game.strokes);
+    const run = scoreStreak(game.strokes, PAR);
+
+    const bits = [`${game.strokes} stroke${game.strokes === 1 ? '' : 's'} · par ${PAR}`];
+    if (rec.beaten) bits.push(`BEST — beat ${rec.previous}`);
+    else if (!rec.first && rec.best < game.strokes) bits.push(`best ${rec.best}`);
+    if (run >= 2) bits.push(`${run} in a row`);
+    bits.push(`${rel} thru ${game.holeIndex + 1}`);
+
+    let title = scoreName(game.strokes, PAR);
+    if (last) {
+      // The round is only compared with itself once it is actually finished.
+      const round = recordRound(COURSE.id, game.total);
+      if (round.beaten) title = 'New best round!';
+      else if (!round.first) bits.push(`best round ${fmtPar(round.best)}`);
+    }
+
     hud.card(
-      scoreName(game.strokes, PAR),
-      `${game.strokes} stroke${game.strokes === 1 ? '' : 's'} · par ${PAR}  ·  ${rel} thru ${game.holeIndex + 1}`,
+      title,
+      bits.join('  ·  '),
       last ? 'Start again' : `Hole ${HOLES[game.holeIndex + 1].n} →`
     );
   }, 1400);
+}
+
+/** Signed par, the way a scoreboard writes it. */
+function fmtPar(v) {
+  return v === 0 ? 'level' : v > 0 ? `+${v}` : `${v}`;
 }
 
 function penalty(kind) {
@@ -824,7 +870,7 @@ function frame() {
     driveT += dt;
     cart.update(dt, cartCtl.read());
     cartCtl.setFuel(cart.boost);
-    audio.engineDrive(Math.min(1, Math.abs(cart.speed) / 13.5), cart.boosting);
+    audio.engineDrive(Math.min(1, Math.abs(cart.speed) / 27), cart.boosting || cart.turbo > 0);
     if (match?.active && match.oppCart) {
       const hit = cart.collide(match.oppCart);
       if (hit > 2.2 && time - (game.lastRam ?? -9) > 0.6) {
@@ -846,7 +892,10 @@ function frame() {
     // Near enough, slow enough. Requiring a full stop made every arrival end
     // in a fiddle; requiring only proximity meant you flew past at speed and
     // the shot began facing backwards.
-    if (d < 4.2 && Math.abs(cart.speed) < 2.6) arriveAtBall();
+    // Wider and a little more forgiving than it was, because the cart is now
+    // quick enough that a four-yard window at walking pace is a window you
+    // sail straight past every time.
+    if (d < 5.5 && Math.abs(cart.speed) < 4.5 && !cart.airborne) arriveAtBall();
     // And a way out for anyone who does not want to drive today.
     else if (driveT > 90) arriveAtBall();
   }
@@ -1162,6 +1211,7 @@ let looping = false;
  * the world anyway, so this is the one place they are set.
  */
 function startRound({ course, time }) {
+  resetStreak();
   setCourse(course);
   setTimeOfDay(time);
   disposeLights();            // the sun may have moved; buildWorld makes a new one
