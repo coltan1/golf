@@ -466,7 +466,16 @@ function onHoled() {
   audio.holed();
   hud.showPower(false);
   hud.hint('');
-  setTimeout(() => {
+  // Held, so it can be called off.
+  //
+  // In a match the hole can end between the ball dropping and this firing —
+  // whoever holes out last completes the pair, and the match advances the
+  // moment they do. A second and a half later this used to wake up on the
+  // *next* hole, read game.holeIndex as it now was, and offer a card for the
+  // hole after that. Pressing it skipped one. Only the slower player ever saw
+  // it, because the faster one's card is dismissed by the same advance.
+  clearTimeout(game.cardTimer);
+  game.cardTimer = setTimeout(() => {
     game.total += game.strokes - PAR;
     refreshScore();
     const rel = game.total === 0 ? 'level' : game.total > 0 ? `+${game.total}` : `${game.total}`;
@@ -619,6 +628,8 @@ function refreshScore() {
 
 /** The one path that changes hole, shared by the scorecard and by a match. */
 function goToHole(next, resetTotal) {
+  // Any scorecard still on its way belongs to the hole we are leaving.
+  clearTimeout(game.cardTimer);
   hud.hideCard();
   if (resetTotal) game.total = 0;
   // Building a hole blocks for well over a second, most of it baking the
