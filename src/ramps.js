@@ -22,6 +22,7 @@ import { mulberry32, lerp, clamp } from './util.js';
 import {
   heightAt, centreXAt, fairwayHalfWidth, nearest, greenEdge, bunkerEdge,
   TEE, WORLD_CZ, WORLD_SIZE, shoreEdge, OCEAN, HOLE_POS,
+  waterLevelAt, isOutOfBounds,
 } from './course.js';
 
 // A kicker is short, wide enough to hit without aiming perfectly, and not very
@@ -30,7 +31,7 @@ import {
 // rises, not how far.
 const LEN = 8.0;
 const HALF_W = 3.2;
-const RISE = 2.4;
+const RISE = 3.2;
 
 /**
  * The profile, and the one number in this file that decides whether a ramp
@@ -143,8 +144,16 @@ function placeable(x, z) {
   if (greenEdge(x, z) > -14) return false;
   if (bunkerEdge(x, z) > -4) return false;
   if (OCEAN && shoreEdge(x, z) < 18) return false;
+  // Not in a pond and not off the map.
+  //
+  // This used to be `heightAt < -1`, standing in for "underwater" — and it was
+  // silently throwing away most of the course. Nothing says the datum is sea
+  // level: hole two's fairway simply sits below zero for its whole length, so
+  // ninety-six per cent of the corridor failed a test about water while bone
+  // dry, and nine of the eighteen holes came out with a single ramp. Ask the
+  // question that was meant instead of a proxy for it, and they come back.
+  if (waterLevelAt(x, z) > -900 || isOutOfBounds(x, z)) return false;
   const y = heightAt(x, z);
-  if (y < -1) return false;
   // Flat enough. Sampled at the four corners of the footprint rather than by
   // the gradient, because the gradient is the slope at a point and what
   // matters is whether this particular nine-yard box sits level.
@@ -170,9 +179,34 @@ export function createRamps(toonRamp, seed = 1) {
 
   const rnd = mulberry32(90210 + seed * 7717);
   const zNear = TEE.z - 40;
-  const zFar = WORLD_CZ - WORLD_SIZE * 0.30;
+  // Short of the pin, not short of the world.
+  //
+  // The old limit was three-tenths of the map from the far edge, which on hole
+  // one lands twenty-eight yards PAST the green — and one of the three ramps
+  // was going there. It passed every test in placeable (fairway, off the
+  // green, flat) and was aimed correctly at a pin that was now behind it, so
+  // it was a perfectly good ramp that nobody would ever reach, because nobody
+  // drives past the hole. At seven ramps that was a rounding error. At three
+  // it is a third of them.
+  const zFar = Math.max(WORLD_CZ - WORLD_SIZE * 0.30, HOLE_POS.z + 35);
 
-  for (let attempt = 0; attempt < 600 && ramps.length < 7; attempt++) {
+  // How far apart they have to be, as a fraction of the hole rather than as a
+  // flat number.
+  //
+  // Ninety-five yards was measured on a five-hundred-yard hole and it is right
+  // there. Applied to a short par three it is longer than the corridor, so the
+  // second ramp can never be placed anywhere and half the course came out with
+  // exactly one. A third of the run each is what was actually wanted; the
+  // yardage was only ever a proxy for it.
+  const spread = clamp(Math.abs(zFar - zNear) / 3.4, 42, 95);
+
+  // Three, not seven.
+  //
+  // Seven of them across a corridor is a slalom — you meet one every sixty
+  // yards, so hitting a ramp stops being a decision and becomes the default
+  // state of driving. Three spread over the hole means each one is a thing you
+  // see coming and choose to line up.
+  for (let attempt = 0; attempt < 900 && ramps.length < 3; attempt++) {
     const z = lerp(zNear, zFar, rnd());
     const side = rnd() < 0.5 ? 1 : -1;
     const n0 = nearest(centreXAt(z), z);
@@ -182,7 +216,7 @@ export function createRamps(toonRamp, seed = 1) {
     const x = centreXAt(z) + side * off;
     if (!placeable(x, z)) continue;
     // Spread out, or they cluster where the corridor happens to be widest.
-    if (ramps.some((r) => Math.hypot(r.x - x, r.z - z) < 55)) continue;
+    if (ramps.some((r) => Math.hypot(r.x - x, r.z - z) < spread)) continue;
 
     // Straight at the pin.
     //
@@ -255,4 +289,3 @@ export function rampList() { return ramps.map((r) => ({ ...r })); }
 export function clearRamps() { ramps = []; }
 
 export const RAMP = { LEN, HALF_W, RISE };
-void clamp;

@@ -23,7 +23,7 @@
 import * as THREE from 'three';
 import { heightAt, gradientAt, surfaceAt, isOutOfBounds, waterLevelAt } from './course.js';
 import { clamp, lerp } from './util.js';
-import { rampHeightAt } from './ramps.js';
+import { rampHeightAt, onRamp } from './ramps.js';
 
 /**
  * The height the wheels sit at: the ground, or a ramp standing on it.
@@ -89,9 +89,27 @@ const CHARGE_FULL = 1.0;       // enough for a turbo
 const TURBO_KICK = 9.0;        // yards a second, straight into the exit
 
 // Air. Crest a mound at speed and the wheels leave the ground.
-const GRAVITY = 34.0;
+//
+// Gravity is about three times the real thing, which is what stops a golf
+// cart floating like a moon lander, but it was 34 and that made every jump a
+// hop — the cart was back on the grass before you had finished noticing it had
+// left. Twenty-nine is still heavy and buys about a fifth more hang.
+const GRAVITY = 29.0;
 const LAUNCH_SPEED = 11.0;     // below this it just follows the ground
 const LAUNCH_DROP = 4.5;       // yards a second of ground falling away
+
+// A RAMP launch is authored rather than derived, and that is the whole reason
+// ramps now throw the cart properly.
+//
+// For a mound, working the launch out from how fast the ground fell away is
+// the only honest answer: the terrain does not know it threw you. But it makes
+// the result a hostage to where the frame boundary landed relative to the
+// crest — sample a millisecond late and half the launch is gone. A ramp is not
+// terrain. It was built to do this, so what comes off the lip is a stated
+// number, scaled by the run-up so that arriving fast still matters.
+const RAMP_POP = 9.0;          // yards a second for merely getting up it
+const RAMP_GAIN = 16.0;        // and this much more, at full tilt
+const RAMP_REF = 42.0;         // the speed that counts as full tilt — boosted
 
 // How much of the top speed each surface allows.
 const GRIP = {
@@ -374,10 +392,14 @@ export class Cart {
       this.charge = 0;
     }
 
+    // Asked before the move, because the question is whether the wheels were
+    // on a deck when they left the ground, not where they ended up.
+    const leftRamp = onRamp(this.pos.x, this.pos.z);
+
     const s = Math.sin(this.travel), c = Math.cos(this.travel);
     let nx = this.pos.x + (s * this.speed + this.bump.x) * dt;
     let nz = this.pos.z + (-c * this.speed + this.bump.z) * dt;
-    this.bump.multiplyScalar(Math.exp(-3.4 * dt));
+    this.bump.multiplyScalar(Math.exp(-2.4 * dt));
 
     // Water and the world edge are walls, not hazards. Losing the cart down a
     // cliff would need a recovery flow nobody asked for, and the honest fix is
@@ -408,14 +430,19 @@ export class Cart {
       this.vy -= GRAVITY * dt;
       this.pos.y += this.vy * dt;
       if (this.pos.y <= groundY) {
-        const impact = Math.min(1, Math.abs(this.vy) / 22);
+        // Measured against a bigger number than before, because the jumps got
+        // bigger. Against 22 every ramp landing pinned the impact at 1 and
+        // took the full penalty, so the better the jump the worse the exit —
+        // which is exactly backwards for a thing you want people to aim at.
+        const impact = Math.min(1, Math.abs(this.vy) / 32);
         this.pos.y = groundY;
         this.airborne = false;
         this.vy = 0;
         this.squash = impact;
-        // A landing costs a little speed, and a heavy one costs more. Free
-        // landings make every mound a shortcut and the ground stops mattering.
-        this.speed *= 1 - impact * 0.22;
+        // A landing still costs a little speed, and a heavy one costs more.
+        // Free landings make every mound a shortcut and the ground stops
+        // mattering; too expensive and nobody jumps twice.
+        this.speed *= 1 - impact * 0.15;
         if (impact > 0.12) this.onLand?.(impact);
       }
     } else {
@@ -431,9 +458,15 @@ export class Cart {
       // crawl.
       if (Math.abs(this.speed) > LAUNCH_SPEED && groundVy < -LAUNCH_DROP) {
         this.airborne = true;
-        // Carrying whatever the run-up was giving, so a fast approach up a
-        // mound throws the cart further than a slow one over the same lip.
-        this.vy = Math.max(0, this._groundVy) * 0.75 + 1.5;
+        this.vy = leftRamp
+          // Off a kicker: the stated launch, plus the run-up. Boosting into a
+          // ramp is the fastest you will ever hit one and it is rewarded with
+          // the biggest jump, which is the whole reason to line one up.
+          ? RAMP_POP + Math.min(1, Math.abs(this.speed) / RAMP_REF) * RAMP_GAIN
+          // Off a mound: carry whatever the ground was already giving, so a
+          // fast approach throws the cart further than a slow one over the
+          // same crest.
+          : Math.max(0, this._groundVy) * 0.75 + 1.5;
       }
     }
     this._groundVy = this.airborne ? this._groundVy : groundVy;
@@ -525,10 +558,39 @@ export class Cart {
     this.pos.x += nx * overlap * 0.5;
     this.pos.z += nz * overlap * 0.5;
 
-    const kick = 3.2 + closing * 1.15;
+    // Much more shove, and it carries for nearly twice as long — see the decay
+    // in update, which came down from 3.4 to 2.4. A hit used to be a nudge that
+    // was over in a quarter of a second and moved you five yards.
+    //
+    // Almost all of the increase is in the SLOPE, not the base, and that
+    // matters more than the size of either. The first attempt at this kept a
+    // big flat term and a gentle touch threw you twelve yards — which makes
+    // brushing somebody in a corner as good as hunting them down, so there is
+    // no reason to line a hit up. At three yards a second of shove per yard a
+    // second of closing speed, a nudge is worth about five yards and a
+    // full-tilt T-bone better than thirty, and the difference between them is
+    // entirely how well you aimed.
+    const kick = 1.5 + closing * 3.0;
     this.bump.x += nx * kick;
     this.bump.z += nz * kick;
-    this.speed *= 0.55;
+
+    // Being rammed hurts more than ramming does.
+    //
+    // It was a flat 0.55 for both, which quietly made the shunt a bad trade:
+    // you gave up nearly half your speed to take away nearly half of theirs,
+    // and since you were the one who had to go out of your way to arrive, you
+    // came off worse. Scaled by the closing speed, the aggressor keeps most of
+    // what they had and the one who got hit is the one who pays.
+    this.speed *= lerp(0.86, 0.42, Math.min(1, closing / 14));
+
+    // And a hard enough hit picks the wheels up. Purely for the spectacle —
+    // the bump does all the actual moving — but a cart that gets launched
+    // rather than pushed is the difference between an accident and a hit.
+    if (closing > 7 && !this.airborne) {
+      this.airborne = true;
+      this.vy = 2.5 + Math.min(11.0, (closing - 7) * 0.7);
+    }
+
     // A shove also turns you, which is what makes it worth doing to somebody.
     this.heading += (nx * Math.cos(this.heading) + nz * Math.sin(this.heading)) * 0.35;
     return closing;
